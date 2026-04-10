@@ -1,32 +1,3 @@
-Voy a convertir esta plantilla en una versión con panel administrativo real y explicar el límite importante: si quieres que siga funcionando publicada en internet para todos los usuarios, necesitas persistencia remota, no solo JavaScript en memoria. Voy a basarme en una opción sin servidor propio usando Firebase para que el panel pueda editar boletos, premios, precios y números vendidos desde cualquier navegador autorizado.La forma correcta de hacerlo para que siga funcionando ya publicada en internet es sacar el estado de la rifa del navegador y guardarlo en una base remota. Con solo HTML + JS local, al publicar la página no tendrás un panel compartido entre dispositivos; solo funcionaría por navegador con `localStorage`.
-
-Te dejo una versión lista para usar con:
-
-- Panel admin real
-- Login de administrador con Firebase Auth
-- Datos persistentes en Firestore
-- Boletos vendidos, apartados y configuración editables
-- Funciona publicada en hosting estático
-
-Fuentes oficiales usadas:
-- Firebase Auth web: https://firebase.google.com/docs/auth/web/start
-- Email/password auth: https://firebase.google.com/docs/auth/web/password-auth
-- Firestore web SDK: https://firebase.google.com/docs/firestore/client/libraries
-- Firebase modular SDK: https://firebase.google.com/docs/web/modular-upgrade
-
-**Qué cambia**
-- El sitio público lee premio, fecha, precio y boletos desde Firestore.
-- El panel admin permite:
-  - iniciar sesión
-  - cambiar premio, fecha, hora, precio, WhatsApp y total de boletos
-  - marcar boletos como `vendido` o `disponible`
-  - ver apartados enviados
-- El botón de WhatsApp además guarda el apartado en Firestore antes de abrir WhatsApp.
-
-**Archivo**
-Reemplaza tu HTML por este `index.html` completo y luego configura Firebase con tus credenciales.
-
-```html
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -1700,34 +1671,3 @@ service cloud.firestore {
     }
   }
 }
-```
-
-**Importante**
-Esa regla de `tickets` permite update público para que el cliente reserve. Es funcional, pero no es la opción más segura. La versión seria para producción fuerte es:
-
-- cliente crea solo `orders`
-- una Cloud Function valida disponibilidad
-- la Cloud Function marca `tickets`
-- el navegador nunca escribe directamente estados críticos
-
-Si quieres máxima seguridad, ese es el siguiente paso.
-
-**Cómo publicarlo**
-1. Crea un proyecto en Firebase.
-2. Activa `Authentication > Email/Password`.
-3. Crea el usuario administrador.
-4. Activa `Firestore Database`.
-5. Copia las credenciales web del proyecto y pégalas en `firebaseConfig`.
-6. Publica este `index.html` en tu hosting.
-
-**Límite real**
-- Esta versión ya funciona publicada.
-- El panel admin funciona desde cualquier navegador donde inicies sesión.
-- Los apartados y cambios quedan guardados online.
-- Pero para evitar fraudes o carreras de concurrencia, lo ideal es endurecerlo con Cloud Functions.
-
-Si quieres, el siguiente paso útil es uno de estos:
-
-1. Te entrego una versión más segura con Cloud Functions y validación real de disponibilidad.
-2. Te la separo en archivos `index.html`, `app.js` y `firestore.rules`.
-3. Te adapto este panel para tu dominio/hosting actual y con tus datos reales.
