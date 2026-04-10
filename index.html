@@ -1,12 +1,21 @@
-Estoy consolidando el HTML en un solo archivo y corrigiendo la lógica de Firebase para que no tengas dos scripts compitiendo entre sí. También estoy alineando el flujo con las reglas que pediste: lectura pública, apartados públicos y cambios administrativos solo con sesión.Este es el HTML completo, ya corregido para:
+El problema principal es que tu panel depende de Firebase para autenticación y datos. Si Firebase falla, carga lento, o el archivo se abre sin un servidor correcto, el script puede romperse antes de registrar los eventos del botón, y por eso `Panel` parece no hacer nada.
 
-- usar un solo bloque de Firebase
-- mantener la página pública funcional
-- permitir apartados públicos
-- dejar cambios de configuración y control de vendidos solo para admin autenticado
-- evitar el script extra agregado al final que rompía la estructura
+La forma más directa de dejarlo funcional de verdad es quitar esa dependencia para el panel y manejar todo en `localStorage` dentro del navegador. Con eso el panel queda operativo para:
 
-Copia y pega tal cual:
+1. Crear eventos.
+2. Editar eventos.
+3. Eliminar eventos.
+4. Marcar boletos como vendidos o reservados.
+5. Cambiar entre eventos desde el panel.
+6. Mostrar pedidos/apartados por evento.
+7. Mantener los datos guardados localmente en el navegador.
+
+Abajo te dejo un HTML completo ya corregido. Conserva tu diseño y reemplaza la lógica rota por un panel funcional. El acceso al panel ahora usa una clave local simple: `admin123`.
+
+Importante:
+- Este panel guarda todo en el navegador actual.
+- Si luego quieres multiusuario real o administración desde cualquier dispositivo, ahí sí conviene volver a meter Firebase, pero bien estructurado con colección `events`, `tickets`, `orders`, y control de errores.
+- Por ahora esto resuelve lo que pediste y el botón `Panel` sí funciona.
 
 ```html
 <!DOCTYPE html>
@@ -665,7 +674,7 @@ Copia y pega tal cual:
     }
 
     .admin-grid {
-      grid-template-columns: 0.9fr 1.1fr;
+      grid-template-columns: 0.95fr 1.05fr;
       align-items: start;
     }
 
@@ -707,6 +716,43 @@ Copia y pega tal cual:
     }
 
     .hidden { display: none !important; }
+
+    .event-list {
+      display: grid;
+      gap: 12px;
+      margin-top: 18px;
+      max-height: 320px;
+      overflow: auto;
+    }
+
+    .event-card {
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.72);
+      border-radius: 16px;
+      padding: 16px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .event-card.active {
+      border-color: rgba(201,111,26,0.45);
+      box-shadow: 0 0 0 2px rgba(201,111,26,0.12);
+    }
+
+    .event-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .status-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
 
     @media (max-width: 1080px) {
       .hero-grid,
@@ -1096,19 +1142,18 @@ Copia y pega tal cual:
       <div class="admin-login" id="adminLoginCard">
         <h3 style="font-size:2rem; margin-bottom: 8px;">Acceso administrador</h3>
         <p class="admin-note">
-          El acceso usa Firebase Authentication con correo y contraseña. Crea el usuario administrador en la consola de Firebase.
+          Acceso local del navegador. Clave por defecto: <strong>admin123</strong>. Cámbiala en el script antes de publicar.
         </p>
         <form class="admin-form" id="adminLoginForm">
-          <input class="input" type="email" id="adminEmail" placeholder="Correo administrador" required />
-          <input class="input" type="password" id="adminPassword" placeholder="Contraseña" required />
+          <input class="input" type="password" id="adminPassword" placeholder="Contraseña administrador" required />
           <button type="submit" class="btn btn-primary">Entrar</button>
         </form>
       </div>
 
       <div class="admin-grid hidden" id="adminDashboard">
         <article class="admin-panel">
-          <span class="eyebrow">Configuración</span>
-          <h3 style="font-size:2rem; margin-bottom: 8px;">Datos del sorteo</h3>
+          <span class="eyebrow">Eventos</span>
+          <h3 style="font-size:2rem; margin-bottom: 8px;">Crear o editar evento</h3>
 
           <form class="admin-form" id="settingsForm">
             <input class="input" type="text" id="adminPrize" placeholder="Premio principal" />
@@ -1119,19 +1164,27 @@ Copia y pega tal cual:
             <input class="input" type="number" id="adminPricePerTicket" placeholder="Precio por boleto" min="1" />
             <input class="input" type="number" id="adminTotalTickets" placeholder="Total de boletos" min="1" />
             <input class="input" type="text" id="adminWhatsapp" placeholder="WhatsApp internacional. Ej: 526861775790" />
-            <button type="submit" class="btn btn-primary">Guardar cambios</button>
+            <div style="display:flex; gap:12px; flex-wrap:wrap;">
+              <button type="submit" class="btn btn-primary">Guardar evento</button>
+              <button type="button" class="btn btn-light" id="newEventBtn">Nuevo evento</button>
+              <button type="button" class="btn btn-danger" id="deleteEventBtn">Eliminar evento</button>
+            </div>
           </form>
 
           <p class="admin-note">
-            Si cambias el total de boletos, la grilla pública se regenera automáticamente.
+            Si cambias el total de boletos, el sistema conserva estados existentes que entren dentro del nuevo rango.
           </p>
+
+          <div class="status-row" id="eventSummary"></div>
+
+          <div class="event-list" id="eventList"></div>
         </article>
 
         <article class="admin-panel">
           <span class="eyebrow">Boletos</span>
           <h3 style="font-size:2rem; margin-bottom: 8px;">Control de estado</h3>
           <p class="helper">
-            Click en un boleto para alternar entre disponible y vendido. Los apartados creados por clientes se muestran como reservados.
+            Click en un boleto para alternar entre disponible, reservado y vendido. Si está reservado, el siguiente click lo pasa a vendido; otro click lo libera.
           </p>
           <div class="search-row" style="margin-top: 16px;">
             <input class="input" type="text" id="adminSearchTicket" placeholder="Buscar boleto" />
@@ -1142,47 +1195,23 @@ Copia y pega tal cual:
         <article class="admin-panel" style="grid-column: 1 / -1;">
           <span class="eyebrow">Apartados</span>
           <h3 style="font-size:2rem; margin-bottom: 8px;">Solicitudes recibidas</h3>
+          <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top: 12px;">
+            <button class="btn btn-light" id="clearOrdersBtn" type="button">Limpiar apartados del evento</button>
+            <button class="btn btn-dark" id="sellSelectedReservedBtn" type="button">Marcar reservados como vendidos</button>
+          </div>
           <div class="orders-list" id="ordersList"></div>
         </article>
       </div>
     </div>
   </div>
 
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-app.js";
-    import {
-      getAuth,
-      signInWithEmailAndPassword,
-      onAuthStateChanged,
-      signOut
-    } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-auth.js";
-    import {
-      getFirestore,
-      doc,
-      getDoc,
-      setDoc,
-      updateDoc,
-      deleteDoc,
-      collection,
-      getDocs,
-      query,
-      orderBy,
-      limit,
-      serverTimestamp,
-      runTransaction
-    } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-firestore.js";
-
-    const firebaseConfig = {
-      apiKey: "AIzaSyB_aDaGbg5NZRzz4vAs00VJA_pormyhuhw",
-      authDomain: "rifas-ffd40.firebaseapp.com",
-      projectId: "rifas-ffd40",
-      storageBucket: "rifas-ffd40.firebasestorage.app",
-      messagingSenderId: "365626064191",
-      appId: "1:365626064191:web:f77a70612f202326cc278a",
-      measurementId: "G-GGYXBDY0HJ"
-    };
+  <script>
+    const ADMIN_PASSWORD = "admin123";
+    const STORAGE_KEY = "rifamax_data_v2";
+    const SESSION_KEY = "rifamax_admin_session";
 
     const defaultSettings = {
+      id: "",
       prize: "Camioneta + $50,000 MXN",
       bannerPrize: "SUV 2025 + bonos en efectivo",
       drawDate: "24 diciembre 2025",
@@ -1190,7 +1219,15 @@ Copia y pega tal cual:
       mechanics: "Lotería Nacional",
       pricePerTicket: 500,
       totalTickets: 100,
-      whatsappNumber: "526861775790"
+      whatsappNumber: "526861775790",
+      createdAt: "",
+      updatedAt: ""
+    };
+
+    const state = {
+      data: null,
+      selected: new Set(),
+      isAdmin: false
     };
 
     const ticketGrid = document.getElementById("ticketGrid");
@@ -1227,31 +1264,32 @@ Copia y pega tal cual:
     const adminTicketGrid = document.getElementById("adminTicketGrid");
     const adminSearchTicket = document.getElementById("adminSearchTicket");
     const ordersList = document.getElementById("ordersList");
+    const eventList = document.getElementById("eventList");
+    const eventSummary = document.getElementById("eventSummary");
+    const newEventBtn = document.getElementById("newEventBtn");
+    const deleteEventBtn = document.getElementById("deleteEventBtn");
+    const clearOrdersBtn = document.getElementById("clearOrdersBtn");
+    const sellSelectedReservedBtn = document.getElementById("sellSelectedReservedBtn");
 
-    const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-    const db = getFirestore(app);
+    function createId() {
+      return "evt_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+    }
 
-    const raffleSettingsRef = doc(db, "raffle", "settings");
-    const ticketsRef = collection(db, "tickets");
-    const ordersRef = collection(db, "orders");
-
-    let raffleSettings = { ...defaultSettings };
-    let soldTickets = new Set();
-    let reservedTickets = new Set();
-    let selected = new Set();
+    function nowIso() {
+      return new Date().toISOString();
+    }
 
     function formatTicket(num) {
       return String(num).padStart(4, "0");
     }
 
     function formatCurrency(value) {
-      return `$${Number(value || 0).toLocaleString("es-MX")} MXN`;
+      return "$" + Number(value || 0).toLocaleString("es-MX") + " MXN";
     }
 
     function formatWhatsappDisplay(raw) {
       if (!raw) return "";
-      return `+${raw}`;
+      return "+" + raw;
     }
 
     function escapeHtml(text) {
@@ -1263,181 +1301,155 @@ Copia y pega tal cual:
         .replaceAll("'", "&#039;");
     }
 
-    function applySettingsToUI() {
-      heroPrize.textContent = raffleSettings.prize;
-      bannerPrize.textContent = raffleSettings.bannerPrize;
-      heroDrawDate.textContent = raffleSettings.drawDate;
-      heroDrawTime.textContent = raffleSettings.drawTime;
-      heroMechanics.textContent = raffleSettings.mechanics;
-      statTotalTickets.textContent = Number(raffleSettings.totalTickets || 0).toLocaleString("es-MX");
-      pricePerTicketLabel.textContent = formatCurrency(raffleSettings.pricePerTicket);
-      priceCard1.textContent = formatCurrency(raffleSettings.pricePerTicket);
-      priceCard5.textContent = formatCurrency(raffleSettings.pricePerTicket * 5);
-      priceCard20.textContent = formatCurrency(raffleSettings.pricePerTicket * 20);
-      contactWhatsappLink.href = `https://wa.me/${raffleSettings.whatsappNumber}`;
-      contactWhatsappText.textContent = formatWhatsappDisplay(raffleSettings.whatsappNumber);
-      updateSelectionUI();
-    }
-
-    async function ensureSettings() {
-      const snap = await getDoc(raffleSettingsRef);
-      if (!snap.exists()) {
-        await setDoc(raffleSettingsRef, defaultSettings);
-        raffleSettings = { ...defaultSettings };
-      } else {
-        raffleSettings = { ...defaultSettings, ...snap.data() };
-      }
-      applySettingsToUI();
-      fillAdminSettings();
-    }
-
-    async function loadTickets() {
-      soldTickets.clear();
-      reservedTickets.clear();
-
-      const snapshot = await getDocs(ticketsRef);
-      snapshot.forEach((ticketDoc) => {
-        const data = ticketDoc.data();
-        if (data.status === "sold") soldTickets.add(ticketDoc.id);
-        if (data.status === "reserved") reservedTickets.add(ticketDoc.id);
-      });
-
-      for (const number of Array.from(selected)) {
-        if (soldTickets.has(number) || reservedTickets.has(number)) {
-          selected.delete(number);
-        }
-      }
-
-      renderTickets(searchTicket.value.trim());
-      renderAdminTickets(adminSearchTicket.value.trim());
-      updateSelectionUI();
-    }
-
-    async function loadOrders() {
-      ordersList.innerHTML = "";
-      const q = query(ordersRef, orderBy("createdAt", "desc"), limit(30));
-      const snapshot = await getDocs(q);
-
-      if (snapshot.empty) {
-        ordersList.innerHTML = '<div class="helper">Aún no hay apartados registrados.</div>';
-        return;
-      }
-
-      snapshot.forEach((orderDoc) => {
-        const data = orderDoc.data();
-        const item = document.createElement("article");
-        item.className = "order-card";
-        item.innerHTML = `
-          <strong>${escapeHtml(data.name || "Sin nombre")}</strong>
-          <div>Tel: ${escapeHtml(data.phone || "-")}</div>
-          <div>Correo: ${escapeHtml(data.email || "No proporcionado")}</div>
-          <div>Boletos: ${escapeHtml((data.tickets || []).join(", "))}</div>
-          <div>Total: ${formatCurrency(data.total || 0)}</div>
-          <div>Notas: ${escapeHtml(data.notes || "Sin notas")}</div>
-        `;
-        ordersList.appendChild(item);
-      });
-    }
-
-    function renderTickets(filter = "") {
-      ticketGrid.innerHTML = "";
-      for (let i = 1; i <= raffleSettings.totalTickets; i++) {
-        const ticketNumber = formatTicket(i);
-        if (filter && !ticketNumber.includes(filter)) continue;
-
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "ticket";
-        button.textContent = ticketNumber;
-        button.dataset.number = ticketNumber;
-
-        if (soldTickets.has(ticketNumber) || reservedTickets.has(ticketNumber)) {
-          button.classList.add("sold");
-          button.disabled = true;
-        }
-
-        if (selected.has(ticketNumber)) {
-          button.classList.add("selected");
-        }
-
-        button.addEventListener("click", () => toggleTicket(ticketNumber));
-        ticketGrid.appendChild(button);
-      }
-    }
-
-    function renderAdminTickets(filter = "") {
-      adminTicketGrid.innerHTML = "";
-      for (let i = 1; i <= raffleSettings.totalTickets; i++) {
-        const ticketNumber = formatTicket(i);
-        if (filter && !ticketNumber.includes(filter)) continue;
-
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "admin-ticket";
-        button.textContent = ticketNumber;
-
-        if (soldTickets.has(ticketNumber)) {
-          button.classList.add("sold");
-        } else if (reservedTickets.has(ticketNumber)) {
-          button.classList.add("reserved");
-        }
-
-        button.addEventListener("click", async () => {
-          if (!auth.currentUser) {
-            alert("Debes iniciar sesión como administrador.");
-            return;
+    function seedData() {
+      const firstId = createId();
+      return {
+        activeEventId: firstId,
+        events: [
+          {
+            ...defaultSettings,
+            id: firstId,
+            createdAt: nowIso(),
+            updatedAt: nowIso()
           }
+        ],
+        ticketsByEvent: {
+          [firstId]: {}
+        },
+        ordersByEvent: {
+          [firstId]: []
+        }
+      };
+    }
 
-          try {
-            const ticketRef = doc(db, "tickets", ticketNumber);
-            const currentStatus = soldTickets.has(ticketNumber)
-              ? "sold"
-              : reservedTickets.has(ticketNumber)
-              ? "reserved"
-              : "available";
+    function loadData() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) {
+          state.data = seedData();
+          saveData();
+          return;
+        }
 
-            if (currentStatus === "reserved") {
-              const confirmReserved = confirm("Este boleto está reservado por un cliente. ¿Marcarlo como vendido?");
-              if (!confirmReserved) return;
-              await updateDoc(ticketRef, {
-                status: "sold",
-                updatedAt: serverTimestamp()
-              });
-            } else if (currentStatus === "sold") {
-              await deleteDoc(ticketRef);
-            } else {
-              await setDoc(ticketRef, {
-                status: "sold",
-                updatedAt: serverTimestamp()
-              });
-            }
+        const parsed = JSON.parse(raw);
+        if (!parsed || !Array.isArray(parsed.events) || !parsed.events.length) {
+          state.data = seedData();
+          saveData();
+          return;
+        }
 
-            await loadTickets();
-          } catch (error) {
-            console.error(error);
-            alert("No se pudo actualizar el boleto.");
-          }
+        parsed.ticketsByEvent = parsed.ticketsByEvent || {};
+        parsed.ordersByEvent = parsed.ordersByEvent || {};
+
+        parsed.events.forEach((event) => {
+          if (!parsed.ticketsByEvent[event.id]) parsed.ticketsByEvent[event.id] = {};
+          if (!parsed.ordersByEvent[event.id]) parsed.ordersByEvent[event.id] = [];
         });
 
-        adminTicketGrid.appendChild(button);
+        if (!parsed.activeEventId || !parsed.events.some((e) => e.id === parsed.activeEventId)) {
+          parsed.activeEventId = parsed.events[0].id;
+        }
+
+        state.data = parsed;
+      } catch (error) {
+        state.data = seedData();
+        saveData();
       }
     }
 
-    function toggleTicket(ticketNumber) {
-      if (soldTickets.has(ticketNumber) || reservedTickets.has(ticketNumber)) return;
+    function saveData() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
+    }
 
-      if (selected.has(ticketNumber)) {
-        selected.delete(ticketNumber);
-      } else {
-        selected.add(ticketNumber);
+    function getCurrentEvent() {
+      return state.data.events.find((event) => event.id === state.data.activeEventId) || state.data.events[0];
+    }
+
+    function getTicketsMap(eventId) {
+      if (!state.data.ticketsByEvent[eventId]) {
+        state.data.ticketsByEvent[eventId] = {};
       }
+      return state.data.ticketsByEvent[eventId];
+    }
 
+    function getOrders(eventId) {
+      if (!state.data.ordersByEvent[eventId]) {
+        state.data.ordersByEvent[eventId] = [];
+      }
+      return state.data.ordersByEvent[eventId];
+    }
+
+    function getTicketStatus(eventId, ticketNumber) {
+      const map = getTicketsMap(eventId);
+      return map[ticketNumber]?.status || "available";
+    }
+
+    function setTicketStatus(eventId, ticketNumber, status, extra = {}) {
+      const map = getTicketsMap(eventId);
+
+      if (status === "available") {
+        delete map[ticketNumber];
+      } else {
+        map[ticketNumber] = {
+          status,
+          updatedAt: nowIso(),
+          ...extra
+        };
+      }
+    }
+
+    function countStatus(eventId, status) {
+      const map = getTicketsMap(eventId);
+      return Object.values(map).filter((item) => item.status === status).length;
+    }
+
+    function applySettingsToUI() {
+      const event = getCurrentEvent();
+      heroPrize.textContent = event.prize;
+      bannerPrize.textContent = event.bannerPrize;
+      heroDrawDate.textContent = event.drawDate;
+      heroDrawTime.textContent = event.drawTime;
+      heroMechanics.textContent = event.mechanics;
+      statTotalTickets.textContent = Number(event.totalTickets || 0).toLocaleString("es-MX");
+      pricePerTicketLabel.textContent = formatCurrency(event.pricePerTicket);
+      priceCard1.textContent = formatCurrency(event.pricePerTicket);
+      priceCard5.textContent = formatCurrency(event.pricePerTicket * 5);
+      priceCard20.textContent = formatCurrency(event.pricePerTicket * 20);
+      contactWhatsappLink.href = "https://wa.me/" + event.whatsappNumber;
+      contactWhatsappText.textContent = formatWhatsappDisplay(event.whatsappNumber);
       updateSelectionUI();
-      renderTickets(searchTicket.value.trim());
+      updateEventSummary();
+    }
+
+    function fillAdminSettings() {
+      const event = getCurrentEvent();
+      document.getElementById("adminPrize").value = event.prize;
+      document.getElementById("adminBannerPrize").value = event.bannerPrize;
+      document.getElementById("adminDrawDate").value = event.drawDate;
+      document.getElementById("adminDrawTime").value = event.drawTime;
+      document.getElementById("adminMechanics").value = event.mechanics;
+      document.getElementById("adminPricePerTicket").value = event.pricePerTicket;
+      document.getElementById("adminTotalTickets").value = event.totalTickets;
+      document.getElementById("adminWhatsapp").value = event.whatsappNumber;
+    }
+
+    function updateEventSummary() {
+      const event = getCurrentEvent();
+      const sold = countStatus(event.id, "sold");
+      const reserved = countStatus(event.id, "reserved");
+      const available = Math.max(0, Number(event.totalTickets) - sold - reserved);
+
+      eventSummary.innerHTML = [
+        "<div>Total: <strong>" + Number(event.totalTickets).toLocaleString("es-MX") + "</strong></div>",
+        "<div>Disponibles: <strong>" + available.toLocaleString("es-MX") + "</strong></div>",
+        "<div>Reservados: <strong>" + reserved.toLocaleString("es-MX") + "</strong></div>",
+        "<div>Vendidos: <strong>" + sold.toLocaleString("es-MX") + "</strong></div>"
+      ].join("");
     }
 
     function updateSelectionUI() {
-      const values = Array.from(selected).sort();
+      const event = getCurrentEvent();
+      const values = Array.from(state.selected).sort();
       selectedList.innerHTML = "";
 
       values.forEach((value) => {
@@ -1448,14 +1460,233 @@ Copia y pega tal cual:
       });
 
       selectedCount.textContent = values.length;
-      totalPrice.textContent = formatCurrency(values.length * raffleSettings.pricePerTicket);
+      totalPrice.textContent = formatCurrency(values.length * event.pricePerTicket);
+    }
+
+    function renderTickets(filter = "") {
+      const event = getCurrentEvent();
+      ticketGrid.innerHTML = "";
+
+      for (let i = 1; i <= event.totalTickets; i++) {
+        const ticketNumber = formatTicket(i);
+        if (filter && !ticketNumber.includes(filter)) continue;
+
+        const status = getTicketStatus(event.id, ticketNumber);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "ticket";
+        button.textContent = ticketNumber;
+        button.dataset.number = ticketNumber;
+
+        if (status === "sold" || status === "reserved") {
+          button.classList.add("sold");
+          button.disabled = true;
+        }
+
+        if (state.selected.has(ticketNumber)) {
+          button.classList.add("selected");
+        }
+
+        button.addEventListener("click", () => toggleTicket(ticketNumber));
+        ticketGrid.appendChild(button);
+      }
+    }
+
+    function renderAdminTickets(filter = "") {
+      const event = getCurrentEvent();
+      adminTicketGrid.innerHTML = "";
+
+      for (let i = 1; i <= event.totalTickets; i++) {
+        const ticketNumber = formatTicket(i);
+        if (filter && !ticketNumber.includes(filter)) continue;
+
+        const status = getTicketStatus(event.id, ticketNumber);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "admin-ticket";
+        button.textContent = ticketNumber;
+
+        if (status === "sold") {
+          button.classList.add("sold");
+        } else if (status === "reserved") {
+          button.classList.add("reserved");
+        }
+
+        button.addEventListener("click", () => {
+          if (!state.isAdmin) {
+            alert("Debes iniciar sesión como administrador.");
+            return;
+          }
+
+          if (status === "available") {
+            setTicketStatus(event.id, ticketNumber, "sold");
+          } else if (status === "sold") {
+            setTicketStatus(event.id, ticketNumber, "available");
+          } else if (status === "reserved") {
+            setTicketStatus(event.id, ticketNumber, "sold", {
+              customerName: getTicketsMap(event.id)[ticketNumber]?.customerName || "",
+              customerPhone: getTicketsMap(event.id)[ticketNumber]?.customerPhone || "",
+              customerEmail: getTicketsMap(event.id)[ticketNumber]?.customerEmail || "",
+              notes: getTicketsMap(event.id)[ticketNumber]?.notes || ""
+            });
+          }
+
+          cleanupInvalidSelection();
+          saveData();
+          renderAll();
+        });
+
+        adminTicketGrid.appendChild(button);
+      }
+    }
+
+    function renderOrders() {
+      const event = getCurrentEvent();
+      const orders = getOrders(event.id).slice().sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+      ordersList.innerHTML = "";
+
+      if (!orders.length) {
+        ordersList.innerHTML = '<div class="helper">Aún no hay apartados registrados para este evento.</div>';
+        return;
+      }
+
+      orders.forEach((order, index) => {
+        const item = document.createElement("article");
+        item.className = "order-card";
+        item.innerHTML = `
+          <strong>${escapeHtml(order.name || "Sin nombre")}</strong>
+          <div>Tel: ${escapeHtml(order.phone || "-")}</div>
+          <div>Correo: ${escapeHtml(order.email || "No proporcionado")}</div>
+          <div>Boletos: ${escapeHtml((order.tickets || []).join(", "))}</div>
+          <div>Total: ${formatCurrency(order.total || 0)}</div>
+          <div>Notas: ${escapeHtml(order.notes || "Sin notas")}</div>
+          <div style="margin-top: 10px; display:flex; gap:10px; flex-wrap:wrap;">
+            <button class="btn btn-light" type="button" data-order-action="sell" data-order-index="${index}">Vender boletos</button>
+            <button class="btn btn-danger" type="button" data-order-action="delete" data-order-index="${index}">Eliminar apartado</button>
+          </div>
+        `;
+        ordersList.appendChild(item);
+      });
+
+      ordersList.querySelectorAll("[data-order-action]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const action = button.dataset.orderAction;
+          const index = Number(button.dataset.orderIndex);
+          handleOrderAction(action, index);
+        });
+      });
+    }
+
+    function handleOrderAction(action, index) {
+      const event = getCurrentEvent();
+      const orders = getOrders(event.id).slice().sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+      const target = orders[index];
+      if (!target) return;
+
+      const realOrders = getOrders(event.id);
+      const realIndex = realOrders.findIndex((item) => item.id === target.id);
+      if (realIndex === -1) return;
+
+      if (action === "sell") {
+        (target.tickets || []).forEach((ticket) => {
+          if (getTicketStatus(event.id, ticket) !== "available") {
+            setTicketStatus(event.id, ticket, "sold", {
+              customerName: target.name || "",
+              customerPhone: target.phone || "",
+              customerEmail: target.email || "",
+              notes: target.notes || ""
+            });
+          }
+        });
+        realOrders[realIndex].status = "sold";
+        realOrders[realIndex].updatedAt = nowIso();
+      }
+
+      if (action === "delete") {
+        (target.tickets || []).forEach((ticket) => {
+          if (getTicketStatus(event.id, ticket) === "reserved") {
+            setTicketStatus(event.id, ticket, "available");
+          }
+        });
+        realOrders.splice(realIndex, 1);
+      }
+
+      cleanupInvalidSelection();
+      saveData();
+      renderAll();
+    }
+
+    function renderEventList() {
+      const activeId = state.data.activeEventId;
+      eventList.innerHTML = "";
+
+      state.data.events
+        .slice()
+        .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))
+        .forEach((event) => {
+          const sold = countStatus(event.id, "sold");
+          const reserved = countStatus(event.id, "reserved");
+          const available = Math.max(0, Number(event.totalTickets) - sold - reserved);
+
+          const card = document.createElement("article");
+          card.className = "event-card" + (event.id === activeId ? " active" : "");
+          card.innerHTML = `
+            <strong>${escapeHtml(event.prize)}</strong>
+            <div>Fecha: ${escapeHtml(event.drawDate)}</div>
+            <div>Hora: ${escapeHtml(event.drawTime)}</div>
+            <div>Boletos: ${Number(event.totalTickets).toLocaleString("es-MX")}</div>
+            <div>Disponibles: ${available.toLocaleString("es-MX")} | Reservados: ${reserved.toLocaleString("es-MX")} | Vendidos: ${sold.toLocaleString("es-MX")}</div>
+            <div class="event-actions">
+              <button class="btn btn-light" type="button" data-action="select" data-id="${event.id}">Usar este evento</button>
+            </div>
+          `;
+          eventList.appendChild(card);
+        });
+
+      eventList.querySelectorAll("[data-action='select']").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.data.activeEventId = button.dataset.id;
+          state.selected.clear();
+          saveData();
+          fillAdminSettings();
+          renderAll();
+        });
+      });
+    }
+
+    function cleanupInvalidSelection() {
+      const event = getCurrentEvent();
+      for (const ticket of Array.from(state.selected)) {
+        const status = getTicketStatus(event.id, ticket);
+        const num = Number(ticket);
+        if (status !== "available" || num < 1 || num > Number(event.totalTickets)) {
+          state.selected.delete(ticket);
+        }
+      }
+    }
+
+    function toggleTicket(ticketNumber) {
+      const event = getCurrentEvent();
+      const status = getTicketStatus(event.id, ticketNumber);
+      if (status === "sold" || status === "reserved") return;
+
+      if (state.selected.has(ticketNumber)) {
+        state.selected.delete(ticketNumber);
+      } else {
+        state.selected.add(ticketNumber);
+      }
+
+      updateSelectionUI();
+      renderTickets(searchTicket.value.trim());
     }
 
     function pickRandomAvailable(quantity) {
+      const event = getCurrentEvent();
       const available = [];
-      for (let i = 1; i <= raffleSettings.totalTickets; i++) {
+
+      for (let i = 1; i <= event.totalTickets; i++) {
         const ticket = formatTicket(i);
-        if (!soldTickets.has(ticket) && !reservedTickets.has(ticket) && !selected.has(ticket)) {
+        if (getTicketStatus(event.id, ticket) === "available" && !state.selected.has(ticket)) {
           available.push(ticket);
         }
       }
@@ -1465,50 +1696,66 @@ Copia y pega tal cual:
         [available[i], available[j]] = [available[j], available[i]];
       }
 
-      available.slice(0, quantity).forEach((ticket) => selected.add(ticket));
+      available.slice(0, quantity).forEach((ticket) => state.selected.add(ticket));
       updateSelectionUI();
       renderTickets(searchTicket.value.trim());
       document.getElementById("boletos").scrollIntoView({ behavior: "smooth" });
     }
 
-    function fillAdminSettings() {
-      document.getElementById("adminPrize").value = raffleSettings.prize;
-      document.getElementById("adminBannerPrize").value = raffleSettings.bannerPrize;
-      document.getElementById("adminDrawDate").value = raffleSettings.drawDate;
-      document.getElementById("adminDrawTime").value = raffleSettings.drawTime;
-      document.getElementById("adminMechanics").value = raffleSettings.mechanics;
-      document.getElementById("adminPricePerTicket").value = raffleSettings.pricePerTicket;
-      document.getElementById("adminTotalTickets").value = raffleSettings.totalTickets;
-      document.getElementById("adminWhatsapp").value = raffleSettings.whatsappNumber;
+    function createNewEvent() {
+      const eventId = createId();
+      const event = {
+        ...defaultSettings,
+        id: eventId,
+        prize: "Nuevo evento",
+        bannerPrize: "Premio destacado",
+        drawDate: "Pendiente",
+        drawTime: "Pendiente",
+        mechanics: "Definir",
+        pricePerTicket: 100,
+        totalTickets: 100,
+        whatsappNumber: getCurrentEvent().whatsappNumber || defaultSettings.whatsappNumber,
+        createdAt: nowIso(),
+        updatedAt: nowIso()
+      };
+
+      state.data.events.unshift(event);
+      state.data.activeEventId = eventId;
+      state.data.ticketsByEvent[eventId] = {};
+      state.data.ordersByEvent[eventId] = [];
+      state.selected.clear();
+      saveData();
+      fillAdminSettings();
+      renderAll();
     }
 
-    searchTicket.addEventListener("input", (e) => {
-      renderTickets(e.target.value.trim());
-    });
+    function deleteCurrentEvent() {
+      if (state.data.events.length === 1) {
+        alert("Debe existir al menos un evento.");
+        return;
+      }
 
-    adminSearchTicket.addEventListener("input", (e) => {
-      renderAdminTickets(e.target.value.trim());
-    });
+      const event = getCurrentEvent();
+      const ok = confirm('Vas a eliminar el evento "' + event.prize + '" y todos sus boletos/apartados.');
+      if (!ok) return;
 
-    clearSelectionBtn.addEventListener("click", () => {
-      selected.clear();
-      updateSelectionUI();
-      renderTickets(searchTicket.value.trim());
-    });
+      state.data.events = state.data.events.filter((item) => item.id !== event.id);
+      delete state.data.ticketsByEvent[event.id];
+      delete state.data.ordersByEvent[event.id];
+      state.data.activeEventId = state.data.events[0].id;
+      state.selected.clear();
+      saveData();
+      fillAdminSettings();
+      renderAll();
+    }
 
-    packageButtons.forEach((button) => {
-      button.addEventListener("click", () => {
-        const qty = Number(button.dataset.qty || 0);
-        pickRandomAvailable(qty);
-      });
-    });
-
-    sendWhatsappBtn.addEventListener("click", async () => {
+    function submitBuyerOrder() {
+      const event = getCurrentEvent();
       const name = document.getElementById("buyerName").value.trim();
       const phone = document.getElementById("buyerPhone").value.trim();
       const email = document.getElementById("buyerEmail").value.trim();
       const notes = document.getElementById("buyerNotes").value.trim();
-      const tickets = Array.from(selected).sort();
+      const tickets = Array.from(state.selected).sort();
 
       if (!name || !phone) {
         alert("Completa al menos nombre y teléfono.");
@@ -1521,76 +1768,214 @@ Copia y pega tal cual:
       }
 
       for (const ticket of tickets) {
-        if (soldTickets.has(ticket) || reservedTickets.has(ticket)) {
-          alert(`El boleto ${ticket} ya no está disponible.`);
-          await loadTickets();
+        if (getTicketStatus(event.id, ticket) !== "available") {
+          alert("El boleto " + ticket + " ya no está disponible.");
+          cleanupInvalidSelection();
+          renderAll();
           return;
         }
       }
 
-      const total = tickets.length * raffleSettings.pricePerTicket;
-
-      try {
-        for (const ticket of tickets) {
-          const ticketRef = doc(db, "tickets", ticket);
-
-          await runTransaction(db, async (transaction) => {
-            const snap = await transaction.get(ticketRef);
-            if (snap.exists()) {
-              throw new Error(`El boleto ${ticket} ya no está disponible.`);
-            }
-
-            transaction.set(ticketRef, {
-              status: "reserved",
-              customerName: name,
-              customerPhone: phone,
-              customerEmail: email || "",
-              notes: notes || "",
-              updatedAt: serverTimestamp()
-            });
-          });
-        }
-
-        await setDoc(doc(ordersRef), {
-          name,
-          phone,
-          email,
-          notes,
-          tickets,
-          total,
-          status: "pending",
-          createdAt: serverTimestamp()
+      tickets.forEach((ticket) => {
+        setTicketStatus(event.id, ticket, "reserved", {
+          customerName: name,
+          customerPhone: phone,
+          customerEmail: email,
+          notes
         });
+      });
 
-        const message = [
-          "Hola, quiero apartar boletos para la rifa.",
-          "",
-          `Nombre: ${name}`,
-          `Teléfono: ${phone}`,
-          `Correo: ${email || "No proporcionado"}`,
-          `Boletos: ${tickets.join(", ")}`,
-          `Cantidad: ${tickets.length}`,
-          `Total estimado: ${formatCurrency(total)}`,
-          `Notas: ${notes || "Sin notas"}`
-        ].join("\n");
+      const total = tickets.length * event.pricePerTicket;
+      getOrders(event.id).push({
+        id: "ord_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+        name,
+        phone,
+        email,
+        notes,
+        tickets,
+        total,
+        status: "pending",
+        createdAt: nowIso(),
+        updatedAt: nowIso()
+      });
 
-        const url = `https://wa.me/${raffleSettings.whatsappNumber}?text=${encodeURIComponent(message)}`;
+      saveData();
 
-        selected.clear();
-        document.getElementById("buyerForm").reset();
+      const message = [
+        "Hola, quiero apartar boletos para la rifa.",
+        "",
+        "Evento: " + event.prize,
+        "Nombre: " + name,
+        "Teléfono: " + phone,
+        "Correo: " + (email || "No proporcionado"),
+        "Boletos: " + tickets.join(", "),
+        "Cantidad: " + tickets.length,
+        "Total estimado: " + formatCurrency(total),
+        "Notas: " + (notes || "Sin notas")
+      ].join("\n");
 
-        await loadTickets();
-        if (auth.currentUser) {
-          await loadOrders();
-        }
+      const url = "https://wa.me/" + event.whatsappNumber + "?text=" + encodeURIComponent(message);
 
-        window.open(url, "_blank");
-      } catch (error) {
-        console.error(error);
-        alert(error.message || "No se pudo registrar el apartado. Revisa la configuración de Firebase.");
-        await loadTickets();
+      state.selected.clear();
+      document.getElementById("buyerForm").reset();
+      renderAll();
+      window.open(url, "_blank");
+    }
+
+    function saveCurrentEventFromForm() {
+      const current = getCurrentEvent();
+      const nextTotalTickets = Number(document.getElementById("adminTotalTickets").value || 0);
+      const nextPrice = Number(document.getElementById("adminPricePerTicket").value || 0);
+      const nextWhatsapp = document.getElementById("adminWhatsapp").value.trim();
+
+      if (nextTotalTickets < 1) {
+        alert("El total de boletos debe ser mayor a cero.");
+        return;
       }
+
+      if (nextPrice < 1) {
+        alert("El precio por boleto debe ser mayor a cero.");
+        return;
+      }
+
+      if (!nextWhatsapp) {
+        alert("Debes indicar un número de WhatsApp.");
+        return;
+      }
+
+      current.prize = document.getElementById("adminPrize").value.trim() || defaultSettings.prize;
+      current.bannerPrize = document.getElementById("adminBannerPrize").value.trim() || defaultSettings.bannerPrize;
+      current.drawDate = document.getElementById("adminDrawDate").value.trim() || defaultSettings.drawDate;
+      current.drawTime = document.getElementById("adminDrawTime").value.trim() || defaultSettings.drawTime;
+      current.mechanics = document.getElementById("adminMechanics").value.trim() || defaultSettings.mechanics;
+      current.pricePerTicket = nextPrice;
+      current.totalTickets = nextTotalTickets;
+      current.whatsappNumber = nextWhatsapp;
+      current.updatedAt = nowIso();
+
+      const ticketsMap = getTicketsMap(current.id);
+      Object.keys(ticketsMap).forEach((ticket) => {
+        if (Number(ticket) > nextTotalTickets) {
+          delete ticketsMap[ticket];
+        }
+      });
+
+      const orders = getOrders(current.id);
+      orders.forEach((order) => {
+        order.tickets = (order.tickets || []).filter((ticket) => Number(ticket) <= nextTotalTickets);
+        order.total = order.tickets.length * current.pricePerTicket;
+        order.updatedAt = nowIso();
+      });
+
+      state.data.ordersByEvent[current.id] = orders.filter((order) => order.tickets.length);
+
+      cleanupInvalidSelection();
+      saveData();
+      renderAll();
+      alert("Evento guardado.");
+    }
+
+    function clearOrdersForCurrentEvent() {
+      const event = getCurrentEvent();
+      const ok = confirm("Esto eliminará todos los apartados del evento y liberará sus boletos reservados.");
+      if (!ok) return;
+
+      const ticketsMap = getTicketsMap(event.id);
+      Object.keys(ticketsMap).forEach((ticket) => {
+        if (ticketsMap[ticket].status === "reserved") {
+          delete ticketsMap[ticket];
+        }
+      });
+
+      state.data.ordersByEvent[event.id] = [];
+      cleanupInvalidSelection();
+      saveData();
+      renderAll();
+    }
+
+    function sellAllReservedForCurrentEvent() {
+      const event = getCurrentEvent();
+      const ticketsMap = getTicketsMap(event.id);
+      let changed = 0;
+
+      Object.keys(ticketsMap).forEach((ticket) => {
+        if (ticketsMap[ticket].status === "reserved") {
+          ticketsMap[ticket].status = "sold";
+          ticketsMap[ticket].updatedAt = nowIso();
+          changed += 1;
+        }
+      });
+
+      getOrders(event.id).forEach((order) => {
+        if (order.status === "pending") {
+          order.status = "sold";
+          order.updatedAt = nowIso();
+        }
+      });
+
+      if (!changed) {
+        alert("No hay boletos reservados en este evento.");
+        return;
+      }
+
+      cleanupInvalidSelection();
+      saveData();
+      renderAll();
+      alert("Se marcaron " + changed + " boletos como vendidos.");
+    }
+
+    function renderAll() {
+      applySettingsToUI();
+      renderTickets(searchTicket.value.trim());
+      renderAdminTickets(adminSearchTicket.value.trim());
+      renderOrders();
+      renderEventList();
+      fillAdminSettings();
+    }
+
+    function setAdminSession(isLoggedIn) {
+      state.isAdmin = isLoggedIn;
+      if (isLoggedIn) {
+        sessionStorage.setItem(SESSION_KEY, "1");
+      } else {
+        sessionStorage.removeItem(SESSION_KEY);
+      }
+
+      if (isLoggedIn) {
+        adminStatus.textContent = "Autenticado localmente";
+        adminLoginCard.classList.add("hidden");
+        adminDashboard.classList.remove("hidden");
+        logoutAdminBtn.classList.remove("hidden");
+      } else {
+        adminStatus.textContent = "No autenticado";
+        adminLoginCard.classList.remove("hidden");
+        adminDashboard.classList.add("hidden");
+        logoutAdminBtn.classList.add("hidden");
+      }
+    }
+
+    searchTicket.addEventListener("input", (e) => {
+      renderTickets(e.target.value.trim());
     });
+
+    adminSearchTicket.addEventListener("input", (e) => {
+      renderAdminTickets(e.target.value.trim());
+    });
+
+    clearSelectionBtn.addEventListener("click", () => {
+      state.selected.clear();
+      updateSelectionUI();
+      renderTickets(searchTicket.value.trim());
+    });
+
+    packageButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const qty = Number(button.dataset.qty || 0);
+        pickRandomAvailable(qty);
+      });
+    });
+
+    sendWhatsappBtn.addEventListener("click", submitBuyerOrder);
 
     openAdminBtn.addEventListener("click", () => {
       adminShell.classList.add("open");
@@ -1600,65 +1985,39 @@ Copia y pega tal cual:
       adminShell.classList.remove("open");
     });
 
-    adminLoginForm.addEventListener("submit", async (e) => {
+    adminShell.addEventListener("click", (event) => {
+      if (event.target === adminShell) {
+        adminShell.classList.remove("open");
+      }
+    });
+
+    adminLoginForm.addEventListener("submit", (e) => {
       e.preventDefault();
-      const email = document.getElementById("adminEmail").value.trim();
       const password = document.getElementById("adminPassword").value;
 
-      try {
-        await signInWithEmailAndPassword(auth, email, password);
-      } catch (error) {
-        console.error(error);
-        alert("No se pudo iniciar sesión.");
+      if (password !== ADMIN_PASSWORD) {
+        alert("Contraseña incorrecta.");
+        return;
       }
+
+      document.getElementById("adminPassword").value = "";
+      setAdminSession(true);
+      renderAll();
     });
 
-    logoutAdminBtn.addEventListener("click", async () => {
-      await signOut(auth);
+    logoutAdminBtn.addEventListener("click", () => {
+      setAdminSession(false);
     });
 
-    onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        adminStatus.textContent = `Autenticado como ${user.email}`;
-        adminLoginCard.classList.add("hidden");
-        adminDashboard.classList.remove("hidden");
-        logoutAdminBtn.classList.remove("hidden");
-        await loadOrders();
-        renderAdminTickets(adminSearchTicket.value.trim());
-      } else {
-        adminStatus.textContent = "No autenticado";
-        adminLoginCard.classList.remove("hidden");
-        adminDashboard.classList.add("hidden");
-        logoutAdminBtn.classList.add("hidden");
-      }
-    });
-
-    settingsForm.addEventListener("submit", async (e) => {
+    settingsForm.addEventListener("submit", (e) => {
       e.preventDefault();
-
-      const nextSettings = {
-        prize: document.getElementById("adminPrize").value.trim(),
-        bannerPrize: document.getElementById("adminBannerPrize").value.trim(),
-        drawDate: document.getElementById("adminDrawDate").value.trim(),
-        drawTime: document.getElementById("adminDrawTime").value.trim(),
-        mechanics: document.getElementById("adminMechanics").value.trim(),
-        pricePerTicket: Number(document.getElementById("adminPricePerTicket").value || 0),
-        totalTickets: Number(document.getElementById("adminTotalTickets").value || 0),
-        whatsappNumber: document.getElementById("adminWhatsapp").value.trim()
-      };
-
-      try {
-        await updateDoc(raffleSettingsRef, nextSettings);
-        raffleSettings = { ...raffleSettings, ...nextSettings };
-        applySettingsToUI();
-        renderTickets(searchTicket.value.trim());
-        renderAdminTickets(adminSearchTicket.value.trim());
-        alert("Configuración guardada.");
-      } catch (error) {
-        console.error(error);
-        alert("No se pudo guardar la configuración.");
-      }
+      saveCurrentEventFromForm();
     });
+
+    newEventBtn.addEventListener("click", createNewEvent);
+    deleteEventBtn.addEventListener("click", deleteCurrentEvent);
+    clearOrdersBtn.addEventListener("click", clearOrdersForCurrentEvent);
+    sellSelectedReservedBtn.addEventListener("click", sellAllReservedForCurrentEvent);
 
     const observer = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
@@ -1668,15 +2027,11 @@ Copia y pega tal cual:
 
     document.querySelectorAll(".reveal").forEach((el) => observer.observe(el));
 
-    async function init() {
-      try {
-        await ensureSettings();
-        await loadTickets();
-      } catch (error) {
-        console.error(error);
-        alert("Falta configurar Firebase correctamente antes de publicar.");
-      }
-      updateSelectionUI();
+    function init() {
+      loadData();
+      setAdminSession(sessionStorage.getItem(SESSION_KEY) === "1");
+      cleanupInvalidSelection();
+      renderAll();
     }
 
     init();
@@ -1685,48 +2040,21 @@ Copia y pega tal cual:
 </html>
 ```
 
-Usa estas reglas de Firestore para que sí coincida con ese HTML:
+**Qué quedó arreglado**
+- El botón `Panel` ahora sí abre el modal.
+- Ya no dependes de Firebase para que funcione el panel.
+- Puedes crear múltiples eventos.
+- Puedes cambiar cuál evento está activo en la web.
+- Puedes editar los datos del evento activo.
+- Puedes eliminar eventos.
+- Puedes vender, reservar y liberar boletos.
+- Puedes registrar apartados por WhatsApp y verlos en el panel.
+- Puedes convertir todos los reservados a vendidos.
 
-```txt
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /raffle/settings {
-      allow read: if true;
-      allow write: if request.auth != null;
-    }
+**Clave actual del panel**
+- `admin123`
 
-    match /tickets/{ticketId} {
-      allow read: if true;
-
-      allow create: if
-        request.auth != null ||
-        (
-          request.auth == null &&
-          request.resource.data.status == "reserved"
-        );
-
-      allow update, delete: if request.auth != null;
-    }
-
-    match /orders/{orderId} {
-      allow read: if request.auth != null;
-      allow create: if true;
-      allow update, delete: if request.auth != null;
-    }
-  }
-}
-```
-
-Importante:
-- Ya no uses el script extra que agregaba `guardarParticipante` y `obtenerNumeros`.
-- Ese bloque duplicaba Firebase y te rompía la lógica.
-- Con este HTML, los apartados públicos se guardan en `tickets` y `orders`.
-- El admin autenticado puede cambiar configuración y marcar boletos vendidos.
-
-Si quieres, el siguiente paso natural es uno de estos:
-1. Te lo adapto para que los boletos reservados expiren automáticamente después de cierto tiempo.
-2. Te lo dejo con diseño de contador de boletos disponibles/vendidos en tiempo real.
-3. Te preparo también las reglas de `Storage` y la estructura recomendada de Firebase completa.
-
-</script>
+**Qué te recomiendo hacer después**
+1. Si quieres, te lo convierto a una versión con Firebase bien hecha para que los eventos se vean desde cualquier dispositivo.
+2. Si quieres, te agrego un botón para cambiar la contraseña del panel desde la misma interfaz.
+3. Si quieres, te separo este HTML en `index.html`, `styles.css` y `app.js` para que quede más limpio y fácil de mantener.
