@@ -1114,7 +1114,7 @@
       <div class="admin-head">
         <div>
           <span class="eyebrow">Panel administrativo</span>
-          <div class="admin-status" id="adminStatus">No autenticado</div>
+          <div class="admin-status" id="adminStatus">Verificando sesión...</div>
         </div>
         <div style="display:flex; gap:12px; flex-wrap:wrap;">
           <button class="btn btn-light" id="closeAdmin" type="button">Cerrar</button>
@@ -1125,10 +1125,11 @@
       <div class="admin-login" id="adminLoginCard">
         <h3 style="font-size:2rem; margin-bottom: 8px;">Acceso administrador</h3>
         <p class="admin-note">
-          Acceso local del navegador. Clave por defecto: <strong>admin123</strong>. Cámbiala en el script antes de publicar.
+          Inicia sesión con el correo y la contraseña de Firebase Authentication.
         </p>
         <form class="admin-form" id="adminLoginForm">
-          <input class="input" type="password" id="adminPassword" placeholder="Contraseña administrador" required />
+          <input class="input" type="email" id="adminEmail" placeholder="Correo administrador" required />
+          <input class="input" type="password" id="adminPassword" placeholder="Contraseña" required />
           <button type="submit" class="btn btn-primary">Entrar</button>
         </form>
       </div>
@@ -1188,10 +1189,30 @@
     </div>
   </div>
 
-  <script>
-    const ADMIN_PASSWORD = "admin123";
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-app.js";
+    import {
+      getAuth,
+      onAuthStateChanged,
+      signInWithEmailAndPassword,
+      signOut
+    } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-auth.js";
+
     const STORAGE_KEY = "rifamax_data_v2";
-    const SESSION_KEY = "rifamax_admin_session";
+
+    // Si tu proyecto ya esta vinculado, coloca aqui tu configuracion real.
+    // Si ya la tenias en otro archivo/script, copia exactamente esos datos.
+    const firebaseConfig = {
+      apiKey: "PON_AQUI_TU_API_KEY",
+      authDomain: "PON_AQUI_TU_AUTH_DOMAIN",
+      projectId: "PON_AQUI_TU_PROJECT_ID",
+      storageBucket: "PON_AQUI_TU_STORAGE_BUCKET",
+      messagingSenderId: "PON_AQUI_TU_MESSAGING_SENDER_ID",
+      appId: "PON_AQUI_TU_APP_ID"
+    };
+
+    const firebaseApp = initializeApp(firebaseConfig);
+    const auth = getAuth(firebaseApp);
 
     const defaultSettings = {
       id: "",
@@ -1210,7 +1231,8 @@
     const state = {
       data: null,
       selected: new Set(),
-      isAdmin: false
+      isAdmin: false,
+      adminUser: null
     };
 
     const ticketGrid = document.getElementById("ticketGrid");
@@ -1687,6 +1709,7 @@
 
     function createNewEvent() {
       const eventId = createId();
+      const currentEvent = getCurrentEvent();
       const event = {
         ...defaultSettings,
         id: eventId,
@@ -1697,7 +1720,7 @@
         mechanics: "Definir",
         pricePerTicket: 100,
         totalTickets: 100,
-        whatsappNumber: getCurrentEvent().whatsappNumber || defaultSettings.whatsappNumber,
+        whatsappNumber: currentEvent?.whatsappNumber || defaultSettings.whatsappNumber,
         createdAt: nowIso(),
         updatedAt: nowIso()
       };
@@ -1916,16 +1939,12 @@
       fillAdminSettings();
     }
 
-    function setAdminSession(isLoggedIn) {
-      state.isAdmin = isLoggedIn;
-      if (isLoggedIn) {
-        sessionStorage.setItem(SESSION_KEY, "1");
-      } else {
-        sessionStorage.removeItem(SESSION_KEY);
-      }
+    function setAdminSession(user) {
+      state.adminUser = user || null;
+      state.isAdmin = !!user;
 
-      if (isLoggedIn) {
-        adminStatus.textContent = "Autenticado localmente";
+      if (state.isAdmin) {
+        adminStatus.textContent = "Autenticado: " + (user.email || "administrador");
         adminLoginCard.classList.add("hidden");
         adminDashboard.classList.remove("hidden");
         logoutAdminBtn.classList.remove("hidden");
@@ -1934,6 +1953,26 @@
         adminLoginCard.classList.remove("hidden");
         adminDashboard.classList.add("hidden");
         logoutAdminBtn.classList.add("hidden");
+      }
+    }
+
+    function getFirebaseErrorMessage(error) {
+      const code = error?.code || "";
+
+      switch (code) {
+        case "auth/invalid-credential":
+        case "auth/wrong-password":
+        case "auth/user-not-found":
+        case "auth/invalid-email":
+          return "Correo o contraseña incorrectos.";
+        case "auth/too-many-requests":
+          return "Demasiados intentos. Intenta más tarde.";
+        case "auth/network-request-failed":
+          return "Error de red. Revisa tu conexión.";
+        case "auth/api-key-not-valid":
+          return "La configuración de Firebase no es válida.";
+        default:
+          return "No se pudo iniciar sesión. " + (error?.message || "");
       }
     }
 
@@ -1974,33 +2013,76 @@
       }
     });
 
-    adminLoginForm.addEventListener("submit", (e) => {
+    adminLoginForm.addEventListener("submit", async (e) => {
       e.preventDefault();
+
+      const email = document.getElementById("adminEmail").value.trim();
       const password = document.getElementById("adminPassword").value;
 
-      if (password !== ADMIN_PASSWORD) {
-        alert("Contraseña incorrecta.");
+      if (!email || !password) {
+        alert("Completa correo y contraseña.");
         return;
       }
 
-      document.getElementById("adminPassword").value = "";
-      setAdminSession(true);
-      renderAll();
+      try {
+        await signInWithEmailAndPassword(auth, email, password);
+        document.getElementById("adminEmail").value = "";
+        document.getElementById("adminPassword").value = "";
+      } catch (error) {
+        alert(getFirebaseErrorMessage(error));
+      }
     });
 
-    logoutAdminBtn.addEventListener("click", () => {
-      setAdminSession(false);
+    logoutAdminBtn.addEventListener("click", async () => {
+      try {
+        await signOut(auth);
+      } catch (error) {
+        alert("No se pudo cerrar sesión.");
+      }
     });
 
     settingsForm.addEventListener("submit", (e) => {
       e.preventDefault();
+
+      if (!state.isAdmin) {
+        alert("Debes iniciar sesión como administrador.");
+        return;
+      }
+
       saveCurrentEventFromForm();
     });
 
-    newEventBtn.addEventListener("click", createNewEvent);
-    deleteEventBtn.addEventListener("click", deleteCurrentEvent);
-    clearOrdersBtn.addEventListener("click", clearOrdersForCurrentEvent);
-    sellSelectedReservedBtn.addEventListener("click", sellAllReservedForCurrentEvent);
+    newEventBtn.addEventListener("click", () => {
+      if (!state.isAdmin) {
+        alert("Debes iniciar sesión como administrador.");
+        return;
+      }
+      createNewEvent();
+    });
+
+    deleteEventBtn.addEventListener("click", () => {
+      if (!state.isAdmin) {
+        alert("Debes iniciar sesión como administrador.");
+        return;
+      }
+      deleteCurrentEvent();
+    });
+
+    clearOrdersBtn.addEventListener("click", () => {
+      if (!state.isAdmin) {
+        alert("Debes iniciar sesión como administrador.");
+        return;
+      }
+      clearOrdersForCurrentEvent();
+    });
+
+    sellSelectedReservedBtn.addEventListener("click", () => {
+      if (!state.isAdmin) {
+        alert("Debes iniciar sesión como administrador.");
+        return;
+      }
+      sellAllReservedForCurrentEvent();
+    });
 
     const observer = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
@@ -2012,13 +2094,16 @@
 
     function init() {
       loadData();
-      setAdminSession(sessionStorage.getItem(SESSION_KEY) === "1");
       cleanupInvalidSelection();
       renderAll();
+
+      onAuthStateChanged(auth, (user) => {
+        setAdminSession(user);
+        renderAll();
+      });
     }
 
     init();
   </script>
 </body>
 </html>
-
