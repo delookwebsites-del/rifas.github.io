@@ -1,3 +1,14 @@
+Estoy consolidando el HTML en un solo archivo y corrigiendo la lógica de Firebase para que no tengas dos scripts compitiendo entre sí. También estoy alineando el flujo con las reglas que pediste: lectura pública, apartados públicos y cambios administrativos solo con sesión.Este es el HTML completo, ya corregido para:
+
+- usar un solo bloque de Firebase
+- mantener la página pública funcional
+- permitir apartados públicos
+- dejar cambios de configuración y control de vendidos solo para admin autenticado
+- evitar el script extra agregado al final que rompía la estructura
+
+Copia y pega tal cual:
+
+```html
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -771,7 +782,7 @@
         <a href="#boletos">Compra boletos</a>
         <a href="#faq">Preguntas frecuentes</a>
         <a href="#contacto" class="btn btn-primary">Contactar</a>
-        <button class="btn btn-light" id="openAdmin">Panel</button>
+        <button class="btn btn-light" id="openAdmin" type="button">Panel</button>
       </nav>
     </div>
   </header>
@@ -893,7 +904,7 @@
             <h3>1 boleto</h3>
             <div class="price" id="priceCard1">$500 MXN</div>
             <p>Ideal para quien quiere entrar rápido al sorteo principal.</p>
-            <button class="btn btn-light package-btn" data-qty="1">Seleccionar 1</button>
+            <button class="btn btn-light package-btn" data-qty="1" type="button">Seleccionar 1</button>
           </article>
 
           <article class="package-card featured reveal">
@@ -902,7 +913,7 @@
             <h3>5 boletos</h3>
             <div class="price" id="priceCard5">$2,500 MXN</div>
             <p>Multiplica tus oportunidades y aparta un bloque más fuerte de números.</p>
-            <button class="btn btn-primary package-btn" data-qty="5">Seleccionar 5</button>
+            <button class="btn btn-primary package-btn" data-qty="5" type="button">Seleccionar 5</button>
           </article>
 
           <article class="package-card reveal">
@@ -911,7 +922,7 @@
             <h3>20 boletos</h3>
             <div class="price" id="priceCard20">$10,000 MXN</div>
             <p>Participa por el premio principal y activa el bono promocional en efectivo.</p>
-            <button class="btn btn-dark package-btn" data-qty="20">Seleccionar 20</button>
+            <button class="btn btn-dark package-btn" data-qty="20" type="button">Seleccionar 20</button>
           </article>
         </div>
       </div>
@@ -1077,8 +1088,8 @@
           <div class="admin-status" id="adminStatus">No autenticado</div>
         </div>
         <div style="display:flex; gap:12px; flex-wrap:wrap;">
-          <button class="btn btn-light" id="closeAdmin">Cerrar</button>
-          <button class="btn btn-danger hidden" id="logoutAdmin">Cerrar sesión</button>
+          <button class="btn btn-light" id="closeAdmin" type="button">Cerrar</button>
+          <button class="btn btn-danger hidden" id="logoutAdmin" type="button">Cerrar sesión</button>
         </div>
       </div>
 
@@ -1138,34 +1149,37 @@
   </div>
 
   <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js";
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-app.js";
     import {
       getAuth,
       signInWithEmailAndPassword,
       onAuthStateChanged,
       signOut
-    } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-auth.js";
+    } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-auth.js";
     import {
       getFirestore,
       doc,
       getDoc,
       setDoc,
       updateDoc,
+      deleteDoc,
       collection,
       getDocs,
       query,
       orderBy,
       limit,
-      serverTimestamp
-    } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore.js";
+      serverTimestamp,
+      runTransaction
+    } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-firestore.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyB_aDaGbg5NZRzz4vAs00VJA_pormyhuhw",
       authDomain: "rifas-ffd40.firebaseapp.com",
       projectId: "rifas-ffd40",
       storageBucket: "rifas-ffd40.firebasestorage.app",
-      messagingSenderId: "365626064191D",
-      appId: "1:365626064191:web:f77a70612f202326cc278a"
+      messagingSenderId: "365626064191",
+      appId: "1:365626064191:web:f77a70612f202326cc278a",
+      measurementId: "G-GGYXBDY0HJ"
     };
 
     const defaultSettings = {
@@ -1238,6 +1252,15 @@
     function formatWhatsappDisplay(raw) {
       if (!raw) return "";
       return `+${raw}`;
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
     }
 
     function applySettingsToUI() {
@@ -1316,15 +1339,6 @@
       });
     }
 
-    function escapeHtml(text) {
-      return String(text)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#039;");
-    }
-
     function renderTickets(filter = "") {
       ticketGrid.innerHTML = "";
       for (let i = 1; i <= raffleSettings.totalTickets; i++) {
@@ -1369,32 +1383,40 @@
         }
 
         button.addEventListener("click", async () => {
-          const currentStatus = soldTickets.has(ticketNumber)
-            ? "sold"
-            : reservedTickets.has(ticketNumber)
-            ? "reserved"
-            : "available";
-
-          if (currentStatus === "reserved") {
-            const confirmReserved = confirm("Este boleto está reservado por un cliente. ¿Marcarlo como vendido?");
-            if (!confirmReserved) return;
-            await setDoc(doc(db, "tickets", ticketNumber), {
-              status: "sold",
-              updatedAt: serverTimestamp()
-            }, { merge: true });
-          } else if (currentStatus === "sold") {
-            await setDoc(doc(db, "tickets", ticketNumber), {
-              status: "available",
-              updatedAt: serverTimestamp()
-            }, { merge: true });
-          } else {
-            await setDoc(doc(db, "tickets", ticketNumber), {
-              status: "sold",
-              updatedAt: serverTimestamp()
-            }, { merge: true });
+          if (!auth.currentUser) {
+            alert("Debes iniciar sesión como administrador.");
+            return;
           }
 
-          await loadTickets();
+          try {
+            const ticketRef = doc(db, "tickets", ticketNumber);
+            const currentStatus = soldTickets.has(ticketNumber)
+              ? "sold"
+              : reservedTickets.has(ticketNumber)
+              ? "reserved"
+              : "available";
+
+            if (currentStatus === "reserved") {
+              const confirmReserved = confirm("Este boleto está reservado por un cliente. ¿Marcarlo como vendido?");
+              if (!confirmReserved) return;
+              await updateDoc(ticketRef, {
+                status: "sold",
+                updatedAt: serverTimestamp()
+              });
+            } else if (currentStatus === "sold") {
+              await deleteDoc(ticketRef);
+            } else {
+              await setDoc(ticketRef, {
+                status: "sold",
+                updatedAt: serverTimestamp()
+              });
+            }
+
+            await loadTickets();
+          } catch (error) {
+            console.error(error);
+            alert("No se pudo actualizar el boleto.");
+          }
         });
 
         adminTicketGrid.appendChild(button);
@@ -1510,12 +1532,23 @@
 
       try {
         for (const ticket of tickets) {
-          await setDoc(doc(db, "tickets", ticket), {
-            status: "reserved",
-            customerName: name,
-            customerPhone: phone,
-            updatedAt: serverTimestamp()
-          }, { merge: true });
+          const ticketRef = doc(db, "tickets", ticket);
+
+          await runTransaction(db, async (transaction) => {
+            const snap = await transaction.get(ticketRef);
+            if (snap.exists()) {
+              throw new Error(`El boleto ${ticket} ya no está disponible.`);
+            }
+
+            transaction.set(ticketRef, {
+              status: "reserved",
+              customerName: name,
+              customerPhone: phone,
+              customerEmail: email || "",
+              notes: notes || "",
+              updatedAt: serverTimestamp()
+            });
+          });
         }
 
         await setDoc(doc(ordersRef), {
@@ -1539,16 +1572,23 @@
           `Cantidad: ${tickets.length}`,
           `Total estimado: ${formatCurrency(total)}`,
           `Notas: ${notes || "Sin notas"}`
-        ].join("\\n");
+        ].join("\n");
 
         const url = `https://wa.me/${raffleSettings.whatsappNumber}?text=${encodeURIComponent(message)}`;
+
         selected.clear();
+        document.getElementById("buyerForm").reset();
+
         await loadTickets();
-        await loadOrders();
+        if (auth.currentUser) {
+          await loadOrders();
+        }
+
         window.open(url, "_blank");
       } catch (error) {
         console.error(error);
-        alert("No se pudo registrar el apartado. Revisa la configuración de Firebase.");
+        alert(error.message || "No se pudo registrar el apartado. Revisa la configuración de Firebase.");
+        await loadTickets();
       }
     });
 
@@ -1607,12 +1647,17 @@
         whatsappNumber: document.getElementById("adminWhatsapp").value.trim()
       };
 
-      await updateDoc(raffleSettingsRef, nextSettings);
-      raffleSettings = { ...raffleSettings, ...nextSettings };
-      applySettingsToUI();
-      renderTickets(searchTicket.value.trim());
-      renderAdminTickets(adminSearchTicket.value.trim());
-      alert("Configuración guardada.");
+      try {
+        await updateDoc(raffleSettingsRef, nextSettings);
+        raffleSettings = { ...raffleSettings, ...nextSettings };
+        applySettingsToUI();
+        renderTickets(searchTicket.value.trim());
+        renderAdminTickets(adminSearchTicket.value.trim());
+        alert("Configuración guardada.");
+      } catch (error) {
+        console.error(error);
+        alert("No se pudo guardar la configuración.");
+      }
     });
 
     const observer = new IntersectionObserver((entries) => {
@@ -1629,7 +1674,7 @@
         await loadTickets();
       } catch (error) {
         console.error(error);
-        alert("Falta configurar Firebase en el archivo antes de publicar.");
+        alert("Falta configurar Firebase correctamente antes de publicar.");
       }
       updateSelectionUI();
     }
@@ -1640,13 +1685,7 @@
 </html>
 ```
 
-**Reglas de Firestore**
-Necesitas reglas para que:
-- cualquiera pueda leer la rifa pública
-- solo admin autenticado pueda cambiar configuración y marcar vendidos
-- cualquiera pueda crear apartados
-
-Usa esto en Firestore Rules:
+Usa estas reglas de Firestore para que sí coincida con ese HTML:
 
 ```txt
 rules_version = '2';
@@ -1659,9 +1698,15 @@ service cloud.firestore {
 
     match /tickets/{ticketId} {
       allow read: if true;
-      allow create: if true;
-      allow update: if true;
-      allow delete: if request.auth != null;
+
+      allow create: if
+        request.auth != null ||
+        (
+          request.auth == null &&
+          request.resource.data.status == "reserved"
+        );
+
+      allow update, delete: if request.auth != null;
     }
 
     match /orders/{orderId} {
@@ -1671,50 +1716,17 @@ service cloud.firestore {
     }
   }
 }
+```
 
-<!-- Original file preserved above -->
-<!-- AGREGADO: Firebase funcionalidad sin modificar lo existente -->
+Importante:
+- Ya no uses el script extra que agregaba `guardarParticipante` y `obtenerNumeros`.
+- Ese bloque duplicaba Firebase y te rompía la lógica.
+- Con este HTML, los apartados públicos se guardan en `tickets` y `orders`.
+- El admin autenticado puede cambiar configuración y marcar boletos vendidos.
 
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-app.js";
-  import { getFirestore, collection, addDoc, getDocs } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-firestore.js";
-
-  const firebaseConfig = {
-    apiKey: "AIzaSyB_aDaGbg5NZRzz4vAs00VJA_pormyhuhw",
-    authDomain: "rifas-ffd40.firebaseapp.com",
-    projectId: "rifas-ffd40",
-    storageBucket: "rifas-ffd40.firebasestorage.app",
-    messagingSenderId: "365626064191",
-    appId: "1:365626064191:web:f77a70612f202326cc278a",
-    measurementId: "G-GGYXBDY0HJ"
-  };
-
-  const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
-
-  // FUNCION PARA GUARDAR PARTICIPANTE
-  window.guardarParticipante = async function(nombre, numero) {
-    try {
-      const docRef = await addDoc(collection(db, "rifas"), {
-        nombre: nombre,
-        numero: numero,
-        fecha: new Date()
-      });
-      console.log("Guardado con ID:", docRef.id);
-      alert("Número apartado correctamente");
-    } catch (e) {
-      console.error("Error:", e);
-    }
-  }
-
-  // FUNCION PARA OBTENER NUMEROS OCUPADOS
-  window.obtenerNumeros = async function() {
-    const querySnapshot = await getDocs(collection(db, "rifas"));
-    let ocupados = [];
-    querySnapshot.forEach((doc) => {
-      ocupados.push(doc.data().numero);
-    });
-    return ocupados;
-  }
+Si quieres, el siguiente paso natural es uno de estos:
+1. Te lo adapto para que los boletos reservados expiren automáticamente después de cierto tiempo.
+2. Te lo dejo con diseño de contador de boletos disponibles/vendidos en tiempo real.
+3. Te preparo también las reglas de `Storage` y la estructura recomendada de Firebase completa.
 
 </script>
