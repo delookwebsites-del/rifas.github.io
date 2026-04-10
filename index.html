@@ -1,0 +1,1733 @@
+Voy a convertir esta plantilla en una versión con panel administrativo real y explicar el límite importante: si quieres que siga funcionando publicada en internet para todos los usuarios, necesitas persistencia remota, no solo JavaScript en memoria. Voy a basarme en una opción sin servidor propio usando Firebase para que el panel pueda editar boletos, premios, precios y números vendidos desde cualquier navegador autorizado.La forma correcta de hacerlo para que siga funcionando ya publicada en internet es sacar el estado de la rifa del navegador y guardarlo en una base remota. Con solo HTML + JS local, al publicar la página no tendrás un panel compartido entre dispositivos; solo funcionaría por navegador con `localStorage`.
+
+Te dejo una versión lista para usar con:
+
+- Panel admin real
+- Login de administrador con Firebase Auth
+- Datos persistentes en Firestore
+- Boletos vendidos, apartados y configuración editables
+- Funciona publicada en hosting estático
+
+Fuentes oficiales usadas:
+- Firebase Auth web: https://firebase.google.com/docs/auth/web/start
+- Email/password auth: https://firebase.google.com/docs/auth/web/password-auth
+- Firestore web SDK: https://firebase.google.com/docs/firestore/client/libraries
+- Firebase modular SDK: https://firebase.google.com/docs/web/modular-upgrade
+
+**Qué cambia**
+- El sitio público lee premio, fecha, precio y boletos desde Firestore.
+- El panel admin permite:
+  - iniciar sesión
+  - cambiar premio, fecha, hora, precio, WhatsApp y total de boletos
+  - marcar boletos como `vendido` o `disponible`
+  - ver apartados enviados
+- El botón de WhatsApp además guarda el apartado en Firestore antes de abrir WhatsApp.
+
+**Archivo**
+Reemplaza tu HTML por este `index.html` completo y luego configura Firebase con tus credenciales.
+
+```html
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RifaMax | Sistema de Rifas</title>
+  <meta
+    name="description"
+    content="Participa en nuestras rifas en línea. Elige tus números, revisa promociones y aparta tus boletos por WhatsApp."
+  />
+  <style>
+    :root {
+      --bg: #f5efe4;
+      --bg-soft: #fffaf1;
+      --panel: rgba(255, 250, 241, 0.78);
+      --ink: #231b12;
+      --muted: #6d5c4a;
+      --line: rgba(35, 27, 18, 0.12);
+      --brand: #c96f1a;
+      --brand-dark: #9e5211;
+      --brand-soft: #f7d6b0;
+      --accent: #16302b;
+      --success: #1f7a4d;
+      --danger: #a63f2b;
+      --white: #ffffff;
+      --shadow: 0 18px 50px rgba(35, 27, 18, 0.12);
+      --radius-lg: 28px;
+      --radius-md: 18px;
+      --radius-sm: 12px;
+      --max: 1180px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(201, 111, 26, 0.18), transparent 30%),
+        radial-gradient(circle at bottom right, rgba(22, 48, 43, 0.16), transparent 28%),
+        linear-gradient(180deg, #f8f2e9 0%, #efe4d2 100%);
+    }
+
+    img { max-width: 100%; display: block; }
+    a { color: inherit; text-decoration: none; }
+
+    .container {
+      width: min(var(--max), calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      backdrop-filter: blur(12px);
+      background: rgba(248, 242, 233, 0.88);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .nav {
+      min-height: 76px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+
+    .brand-badge {
+      width: 48px;
+      height: 48px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--brand), #eaa04e);
+      color: var(--white);
+      font-size: 1.2rem;
+      box-shadow: var(--shadow);
+    }
+
+    .brand small {
+      display: block;
+      color: var(--muted);
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 18px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .nav-links a {
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      min-height: 50px;
+      padding: 0 22px;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+      transition: 0.2s ease;
+    }
+
+    .btn:hover { transform: translateY(-1px); }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--brand), #e2943e);
+      color: var(--white);
+      box-shadow: 0 14px 30px rgba(201, 111, 26, 0.25);
+    }
+
+    .btn-dark {
+      background: var(--accent);
+      color: var(--white);
+      box-shadow: 0 14px 30px rgba(22, 48, 43, 0.22);
+    }
+
+    .btn-light {
+      background: rgba(255,255,255,0.75);
+      color: var(--ink);
+      border: 1px solid var(--line);
+    }
+
+    .btn-danger {
+      background: var(--danger);
+      color: var(--white);
+    }
+
+    .hero { padding: 52px 0 36px; }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 26px;
+      align-items: stretch;
+    }
+
+    .hero-copy,
+    .hero-card,
+    .section-card,
+    .package-card,
+    .faq-item,
+    .contact-card,
+    .ticket-panel,
+    .admin-panel,
+    .admin-login {
+      background: var(--panel);
+      border: 1px solid rgba(255,255,255,0.55);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    .hero-copy {
+      border-radius: var(--radius-lg);
+      padding: 42px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      margin-bottom: 14px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: rgba(22, 48, 43, 0.08);
+    }
+
+    h1, h2, h3 { margin: 0; line-height: 1.02; }
+
+    h1 {
+      font-size: clamp(2.8rem, 6vw, 5.5rem);
+      letter-spacing: -0.04em;
+      margin-bottom: 16px;
+    }
+
+    .lead {
+      max-width: 58ch;
+      font-size: 1.08rem;
+      line-height: 1.7;
+      color: var(--muted);
+      margin-bottom: 26px;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-bottom: 28px;
+    }
+
+    .hero-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    .stat {
+      padding: 18px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.52);
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 1.7rem;
+      margin-bottom: 4px;
+    }
+
+    .stat span { color: var(--muted); font-size: 0.92rem; }
+
+    .hero-card {
+      border-radius: var(--radius-lg);
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .hero-visual {
+      min-height: 380px;
+      border-radius: 24px;
+      padding: 24px;
+      display: flex;
+      align-items: end;
+      position: relative;
+      overflow: hidden;
+      background:
+        linear-gradient(180deg, rgba(22,48,43,0.08), rgba(22,48,43,0.72)),
+        url("https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&w=1200&q=80") center/cover no-repeat;
+    }
+
+    .hero-visual::before {
+      content: "";
+      position: absolute;
+      inset: 18px;
+      border: 1px solid rgba(255,255,255,0.38);
+      border-radius: 22px;
+      pointer-events: none;
+    }
+
+    .prize-tag {
+      position: relative;
+      z-index: 1;
+      max-width: 340px;
+      padding: 20px;
+      border-radius: 22px;
+      color: var(--white);
+      background: rgba(14, 20, 18, 0.58);
+      backdrop-filter: blur(8px);
+    }
+
+    .prize-tag small {
+      display: inline-block;
+      margin-bottom: 10px;
+      color: #f7d6b0;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.78rem;
+    }
+
+    .prize-tag h2 {
+      font-size: clamp(2rem, 4vw, 3rem);
+      margin-bottom: 10px;
+    }
+
+    .mini-list { display: grid; gap: 10px; }
+
+    .mini-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.68);
+      border: 1px solid var(--line);
+    }
+
+    section { padding: 26px 0; }
+
+    .section-head { margin-bottom: 22px; }
+
+    .section-head p {
+      max-width: 68ch;
+      color: var(--muted);
+      line-height: 1.7;
+      margin: 12px 0 0;
+    }
+
+    .section-title {
+      font-size: clamp(2rem, 4vw, 3.2rem);
+      letter-spacing: -0.04em;
+    }
+
+    .about-grid,
+    .packages-grid,
+    .contact-grid,
+    .admin-grid {
+      display: grid;
+      gap: 20px;
+    }
+
+    .about-grid { grid-template-columns: 1fr 1fr; }
+
+    .section-card {
+      border-radius: 24px;
+      padding: 28px;
+    }
+
+    .checks {
+      display: grid;
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .checks div {
+      display: flex;
+      gap: 10px;
+      align-items: start;
+      color: var(--muted);
+    }
+
+    .checks strong { color: var(--ink); }
+
+    .banner {
+      border-radius: 24px;
+      min-height: 100%;
+      padding: 28px;
+      color: var(--white);
+      background:
+        linear-gradient(135deg, rgba(22,48,43,0.92), rgba(22,48,43,0.58)),
+        url("https://images.unsplash.com/photo-1494976388531-d1058494cdd8?auto=format&fit=crop&w=1200&q=80") center/cover no-repeat;
+      display: flex;
+      flex-direction: column;
+      justify-content: end;
+    }
+
+    .banner p { color: rgba(255,255,255,0.84); line-height: 1.7; }
+
+    .packages-grid { grid-template-columns: repeat(3, 1fr); }
+
+    .package-card {
+      border-radius: 22px;
+      padding: 24px;
+      transition: 0.2s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .package-card:hover { transform: translateY(-3px); }
+
+    .package-card.featured {
+      background: linear-gradient(180deg, rgba(201,111,26,0.12), rgba(255,250,241,0.82));
+      border-color: rgba(201,111,26,0.26);
+    }
+
+    .package-card small {
+      display: inline-block;
+      margin-bottom: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .package-card h3 {
+      font-size: 1.9rem;
+      margin-bottom: 10px;
+    }
+
+    .price {
+      font-size: 2rem;
+      color: var(--brand-dark);
+      margin-bottom: 10px;
+    }
+
+    .package-card p {
+      color: var(--muted);
+      line-height: 1.7;
+      min-height: 70px;
+    }
+
+    .bonus {
+      display: inline-block;
+      margin-bottom: 14px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: var(--brand-soft);
+      color: var(--brand-dark);
+      font-size: 0.82rem;
+      font-weight: 700;
+    }
+
+    .ticket-layout {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 22px;
+      align-items: start;
+    }
+
+    .ticket-panel,
+    .admin-panel,
+    .admin-login {
+      border-radius: 24px;
+      padding: 26px;
+    }
+
+    .search-row,
+    .buyer-form,
+    .admin-form {
+      display: grid;
+      gap: 12px;
+    }
+
+    .buyer-form,
+    .admin-form {
+      margin-top: 18px;
+    }
+
+    .input,
+    select,
+    textarea {
+      width: 100%;
+      min-height: 52px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.84);
+      font: inherit;
+      color: var(--ink);
+      outline: none;
+    }
+
+    textarea {
+      min-height: 110px;
+      resize: vertical;
+    }
+
+    .input:focus,
+    select:focus,
+    textarea:focus {
+      border-color: rgba(201,111,26,0.6);
+      box-shadow: 0 0 0 4px rgba(201,111,26,0.12);
+    }
+
+    .ticket-grid,
+    .admin-ticket-grid {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+      max-height: 430px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .ticket,
+    .admin-ticket {
+      min-height: 54px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255,255,255,0.82);
+      color: var(--ink);
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      transition: 0.18s ease;
+    }
+
+    .ticket:hover,
+    .admin-ticket:hover {
+      transform: translateY(-1px);
+      border-color: rgba(22,48,43,0.28);
+    }
+
+    .ticket.selected {
+      background: linear-gradient(135deg, var(--brand), #e59b47);
+      color: var(--white);
+      border-color: transparent;
+    }
+
+    .ticket.sold,
+    .admin-ticket.sold {
+      background: rgba(109,92,74,0.14);
+      color: rgba(35,27,18,0.45);
+      text-decoration: line-through;
+    }
+
+    .admin-ticket.reserved {
+      background: rgba(22,48,43,0.14);
+      color: var(--accent);
+      border-color: rgba(22,48,43,0.32);
+    }
+
+    .selected-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+      min-height: 20px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 12px;
+      border-radius: 999px;
+      background: var(--brand-soft);
+      color: var(--brand-dark);
+      font-size: 0.92rem;
+      font-weight: 700;
+    }
+
+    .summary-box {
+      display: grid;
+      gap: 12px;
+      margin-top: 16px;
+      padding: 18px;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.62);
+      border: 1px solid var(--line);
+    }
+
+    .summary-line {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      color: var(--muted);
+    }
+
+    .summary-line strong { color: var(--ink); }
+
+    .faq-list { display: grid; gap: 14px; }
+
+    .faq-item {
+      border-radius: 20px;
+      padding: 20px 22px;
+    }
+
+    .faq-item h3 {
+      font-size: 1.05rem;
+      margin-bottom: 8px;
+    }
+
+    .faq-item p {
+      margin: 0;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    .contact-grid { grid-template-columns: 1fr 1fr; }
+
+    .contact-card {
+      border-radius: 24px;
+      padding: 28px;
+    }
+
+    .contact-card p {
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .contact-list {
+      display: grid;
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .contact-list a,
+    .contact-list div {
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: rgba(255,255,255,0.62);
+      border: 1px solid var(--line);
+    }
+
+    .footer {
+      padding: 30px 0 44px;
+      color: var(--muted);
+      font-size: 0.94rem;
+    }
+
+    .footer-wrap {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      border-top: 1px solid var(--line);
+      padding-top: 20px;
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(18px);
+      transition: opacity 0.5s ease, transform 0.5s ease;
+    }
+
+    .reveal.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .admin-shell {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(18, 18, 18, 0.45);
+      z-index: 100;
+      padding: 24px;
+      overflow: auto;
+    }
+
+    .admin-shell.open { display: block; }
+
+    .admin-wrap {
+      width: min(1200px, 100%);
+      margin: 0 auto;
+      display: grid;
+      gap: 18px;
+    }
+
+    .admin-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .admin-grid {
+      grid-template-columns: 0.9fr 1.1fr;
+      align-items: start;
+    }
+
+    .admin-status {
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .admin-note {
+      margin-top: 12px;
+      color: var(--muted);
+      line-height: 1.6;
+      font-size: 0.95rem;
+    }
+
+    .orders-list {
+      display: grid;
+      gap: 12px;
+      margin-top: 16px;
+      max-height: 360px;
+      overflow: auto;
+    }
+
+    .order-card {
+      padding: 16px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.72);
+    }
+
+    .order-card strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .helper {
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
+    .hidden { display: none !important; }
+
+    @media (max-width: 1080px) {
+      .hero-grid,
+      .about-grid,
+      .packages-grid,
+      .ticket-layout,
+      .contact-grid,
+      .admin-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .ticket-grid,
+      .admin-ticket-grid {
+        grid-template-columns: repeat(5, 1fr);
+      }
+    }
+
+    @media (max-width: 720px) {
+      .nav {
+        padding: 12px 0;
+        align-items: start;
+        flex-direction: column;
+      }
+
+      .nav-links { width: 100%; }
+
+      .hero-copy,
+      .hero-card,
+      .section-card,
+      .package-card,
+      .ticket-panel,
+      .contact-card,
+      .admin-panel,
+      .admin-login {
+        padding: 22px;
+      }
+
+      .hero-stats { grid-template-columns: 1fr; }
+
+      .ticket-grid,
+      .admin-ticket-grid {
+        grid-template-columns: repeat(4, 1fr);
+      }
+
+      h1 { font-size: 2.5rem; }
+    }
+
+    @media (max-width: 520px) {
+      .ticket-grid,
+      .admin-ticket-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .hero-actions { flex-direction: column; }
+      .btn { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="container nav">
+      <a href="#inicio" class="brand">
+        <span class="brand-badge">RM</span>
+        <span>
+          RifaMax
+          <small>Sistema de Rifas</small>
+        </span>
+      </a>
+
+      <nav class="nav-links">
+        <a href="#inicio">Inicio</a>
+        <a href="#sorteo">Próximo sorteo</a>
+        <a href="#boletos">Compra boletos</a>
+        <a href="#faq">Preguntas frecuentes</a>
+        <a href="#contacto" class="btn btn-primary">Contactar</a>
+        <button class="btn btn-light" id="openAdmin">Panel</button>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero" id="inicio">
+      <div class="container hero-grid">
+        <div class="hero-copy reveal">
+          <span class="eyebrow">Rifas digitales confiables</span>
+          <h1>Compra tus boletos y participa en grande.</h1>
+          <p class="lead">
+            Plataforma simple para rifas entre amigos, sorteos promocionales y dinámicas con boletaje digital.
+            Elige tus números, revisa promociones y aparta en minutos.
+          </p>
+
+          <div class="hero-actions">
+            <a href="#boletos" class="btn btn-primary">Comprar boleto</a>
+            <a href="#sorteo" class="btn btn-light">Ver premio actual</a>
+          </div>
+
+          <div class="hero-stats">
+            <div class="stat">
+              <strong id="statTotalTickets">100</strong>
+              <span>Números disponibles</span>
+            </div>
+            <div class="stat">
+              <strong>100%</strong>
+              <span>Boletos digitales</span>
+            </div>
+            <div class="stat">
+              <strong>24/7</strong>
+              <span>Atención por WhatsApp</span>
+            </div>
+          </div>
+        </div>
+
+        <aside class="hero-card reveal">
+          <div class="hero-visual">
+            <div class="prize-tag">
+              <small>Próximo premio</small>
+              <h2 id="heroPrize">Camioneta + $50,000 MXN</h2>
+              <p>
+                Participa con tu boleto pagado y entra al sorteo principal con bonos activos por compra múltiple.
+              </p>
+            </div>
+          </div>
+
+          <div class="mini-list">
+            <div class="mini-item">
+              <span>Fecha del sorteo</span>
+              <strong id="heroDrawDate">24 diciembre 2025</strong>
+            </div>
+            <div class="mini-item">
+              <span>Hora estimada</span>
+              <strong id="heroDrawTime">20:00 hrs CDMX</strong>
+            </div>
+            <div class="mini-item">
+              <span>Mecánica</span>
+              <strong id="heroMechanics">Lotería Nacional</strong>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="sorteo">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow">Próximo sorteo</span>
+          <h2 class="section-title">Un evento claro, visual y listo para vender boletos.</h2>
+          <p>
+            Esta versión está pensada para que puedas usarla como landing de rifas real. Incluye promociones,
+            CTA visibles y un selector funcional de números para apartar boletos desde la misma página.
+          </p>
+        </div>
+
+        <div class="about-grid">
+          <article class="section-card reveal">
+            <h3>¿Quiénes somos?</h3>
+            <p class="lead" style="margin: 16px 0 0;">
+              Somos una plataforma para organizar rifas con estructura, seguimiento y una experiencia simple
+              para tus participantes.
+            </p>
+
+            <div class="checks">
+              <div><strong>Boletos digitales:</strong> numeración clara y apartado rápido.</div>
+              <div><strong>Participantes registrados:</strong> formulario de contacto integrado.</div>
+              <div><strong>Promociones activas:</strong> paquetes y bonos por volumen.</div>
+              <div><strong>Compatible con campañas:</strong> ideal para tráfico desde redes sociales.</div>
+            </div>
+          </article>
+
+          <article class="banner reveal">
+            <span class="eyebrow" style="background: rgba(255,255,255,0.12); color: #f8dfbf;">Premio destacado</span>
+            <h3 id="bannerPrize" style="font-size: clamp(2rem, 4vw, 3rem); margin-bottom: 12px;">SUV 2025 + bonos en efectivo</h3>
+            <p>
+              Participa con tu boleto pagado. Si compras paquetes mayores, activas bonos especiales y beneficios de envío.
+            </p>
+            <a href="#boletos" class="btn btn-primary" style="margin-top: 14px; width: fit-content;">Elegir números</a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow">Paquetes</span>
+          <h2 class="section-title">Ofertas listas para convertir.</h2>
+          <p>
+            Los paquetes están pensados para que la persona compre más de un boleto sin dudar. Puedes editar precios,
+            cantidades y bonos directamente desde el panel.
+          </p>
+        </div>
+
+        <div class="packages-grid">
+          <article class="package-card reveal">
+            <small>Entrada individual</small>
+            <h3>1 boleto</h3>
+            <div class="price" id="priceCard1">$500 MXN</div>
+            <p>Ideal para quien quiere entrar rápido al sorteo principal.</p>
+            <button class="btn btn-light package-btn" data-qty="1">Seleccionar 1</button>
+          </article>
+
+          <article class="package-card featured reveal">
+            <span class="bonus">Más vendido</span>
+            <small>Mejor equilibrio</small>
+            <h3>5 boletos</h3>
+            <div class="price" id="priceCard5">$2,500 MXN</div>
+            <p>Multiplica tus oportunidades y aparta un bloque más fuerte de números.</p>
+            <button class="btn btn-primary package-btn" data-qty="5">Seleccionar 5</button>
+          </article>
+
+          <article class="package-card reveal">
+            <span class="bonus">Activa bono</span>
+            <small>Compra estratégica</small>
+            <h3>20 boletos</h3>
+            <div class="price" id="priceCard20">$10,000 MXN</div>
+            <p>Participa por el premio principal y activa el bono promocional en efectivo.</p>
+            <button class="btn btn-dark package-btn" data-qty="20">Seleccionar 20</button>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="boletos">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow">Compra boletos</span>
+          <h2 class="section-title">Selecciona tus números de la suerte.</h2>
+          <p>
+            El selector funciona dentro de la página: puedes buscar, marcar números disponibles,
+            ver el total y generar el mensaje para WhatsApp con los datos del comprador.
+          </p>
+        </div>
+
+        <div class="ticket-layout">
+          <article class="ticket-panel reveal">
+            <div class="search-row">
+              <input class="input" type="text" id="searchTicket" placeholder="Buscar número. Ejemplo: 0007 o 1025" />
+            </div>
+
+            <div class="ticket-grid" id="ticketGrid"></div>
+          </article>
+
+          <aside class="ticket-panel reveal">
+            <span class="eyebrow">Resumen</span>
+            <h3 style="font-size: 2rem; margin-bottom: 8px;">Tu apartado</h3>
+            <p style="color: var(--muted); line-height: 1.7; margin-top: 0;">
+              Completa tus datos y genera el pedido para enviarlo directo por WhatsApp.
+            </p>
+
+            <div class="selected-list" id="selectedList"></div>
+
+            <div class="summary-box">
+              <div class="summary-line">
+                <span>Boletos seleccionados</span>
+                <strong id="selectedCount">0</strong>
+              </div>
+              <div class="summary-line">
+                <span>Precio por boleto</span>
+                <strong id="pricePerTicketLabel">$500 MXN</strong>
+              </div>
+              <div class="summary-line">
+                <span>Total estimado</span>
+                <strong id="totalPrice">$0 MXN</strong>
+              </div>
+            </div>
+
+            <form class="buyer-form" id="buyerForm">
+              <input class="input" type="text" id="buyerName" placeholder="Nombre completo" required />
+              <input class="input" type="tel" id="buyerPhone" placeholder="Teléfono" required />
+              <input class="input" type="email" id="buyerEmail" placeholder="Correo electrónico" />
+              <textarea id="buyerNotes" placeholder="Notas adicionales, referencia de pago o comentario"></textarea>
+
+              <button type="button" class="btn btn-primary" id="sendWhatsapp">
+                Apartar por WhatsApp
+              </button>
+              <button type="button" class="btn btn-light" id="clearSelection">
+                Limpiar selección
+              </button>
+            </form>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <section id="faq">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow">Preguntas frecuentes</span>
+          <h2 class="section-title">Resuelve objeciones antes del cierre.</h2>
+          <p>
+            Estas preguntas están redactadas con la misma intención comercial del sitio de referencia:
+            confianza, claridad y una mecánica simple de sorteo.
+          </p>
+        </div>
+
+        <div class="faq-list">
+          <article class="faq-item reveal">
+            <h3>¿Cómo se elige a los ganadores?</h3>
+            <p>
+              El número ganador se determina con base en el sorteo oficial definido por la organización,
+              por ejemplo la Lotería Nacional. El resultado publicado en la transmisión correspondiente
+              se toma como referencia oficial para entregar el premio.
+            </p>
+          </article>
+
+          <article class="faq-item reveal">
+            <h3>¿Qué pasa si sale un número no pagado o no vendido?</h3>
+            <p>
+              Se realiza una nueva validación en la siguiente transmisión o dinámica indicada en los términos
+              del sorteo. Así se asegura que el premio quede asignado a un boleto liquidado correctamente.
+            </p>
+          </article>
+
+          <article class="faq-item reveal">
+            <h3>¿Dónde se publican los ganadores?</h3>
+            <p>
+              Los resultados y evidencias pueden publicarse en la página oficial de Facebook, Instagram o WhatsApp
+              del organizador, además de compartirse con los participantes registrados.
+            </p>
+          </article>
+
+          <article class="faq-item reveal">
+            <h3>¿A qué hora se transmite el sorteo?</h3>
+            <p>
+              Depende del evento definido. En esta demo está configurado a las 20:00 hrs CDMX, pero puedes cambiar
+              el texto para ajustarlo a la hora real de tu rifa.
+            </p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="contacto">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow">Contacto</span>
+          <h2 class="section-title">Atención rápida para cerrar ventas.</h2>
+        </div>
+
+        <div class="contact-grid">
+          <article class="contact-card reveal">
+            <h3 style="font-size: 2rem; margin-bottom: 10px;">Canales directos</h3>
+            <p>
+              Usa esta sección para colocar tus datos reales. El botón de apartado por WhatsApp ya queda funcional
+              y arma automáticamente el mensaje con los números seleccionados.
+            </p>
+
+            <div class="contact-list">
+              <a id="contactWhatsappLink" href="https://wa.me/526861775790" target="_blank" rel="noopener noreferrer">WhatsApp: <span id="contactWhatsappText">+52 686 177 5790</span></a>
+              <div>Correo: contacto@rifamax.mx</div>
+              <div>Ubicación: Mexicali, Baja California</div>
+            </div>
+          </article>
+
+          <article class="contact-card reveal">
+            <h3 style="font-size: 2rem; margin-bottom: 10px;">Aviso importante</h3>
+            <p>
+              Esta plantilla es una base comercial lista para personalizar. Cambia nombres, premios, fechas,
+              precios, imágenes, teléfono de WhatsApp y términos legales antes de publicarla en producción.
+            </p>
+            <a href="#inicio" class="btn btn-dark" style="margin-top: 10px;">Volver arriba</a>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-wrap">
+      <div>Copyright © 2025 RifaMax.</div>
+      <div>Aviso de Privacidad | Términos y Condiciones</div>
+    </div>
+  </footer>
+
+  <div class="admin-shell" id="adminShell">
+    <div class="admin-wrap">
+      <div class="admin-head">
+        <div>
+          <span class="eyebrow">Panel administrativo</span>
+          <div class="admin-status" id="adminStatus">No autenticado</div>
+        </div>
+        <div style="display:flex; gap:12px; flex-wrap:wrap;">
+          <button class="btn btn-light" id="closeAdmin">Cerrar</button>
+          <button class="btn btn-danger hidden" id="logoutAdmin">Cerrar sesión</button>
+        </div>
+      </div>
+
+      <div class="admin-login" id="adminLoginCard">
+        <h3 style="font-size:2rem; margin-bottom: 8px;">Acceso administrador</h3>
+        <p class="admin-note">
+          El acceso usa Firebase Authentication con correo y contraseña. Crea el usuario administrador en la consola de Firebase.
+        </p>
+        <form class="admin-form" id="adminLoginForm">
+          <input class="input" type="email" id="adminEmail" placeholder="Correo administrador" required />
+          <input class="input" type="password" id="adminPassword" placeholder="Contraseña" required />
+          <button type="submit" class="btn btn-primary">Entrar</button>
+        </form>
+      </div>
+
+      <div class="admin-grid hidden" id="adminDashboard">
+        <article class="admin-panel">
+          <span class="eyebrow">Configuración</span>
+          <h3 style="font-size:2rem; margin-bottom: 8px;">Datos del sorteo</h3>
+
+          <form class="admin-form" id="settingsForm">
+            <input class="input" type="text" id="adminPrize" placeholder="Premio principal" />
+            <input class="input" type="text" id="adminBannerPrize" placeholder="Premio destacado banner" />
+            <input class="input" type="text" id="adminDrawDate" placeholder="Fecha del sorteo" />
+            <input class="input" type="text" id="adminDrawTime" placeholder="Hora del sorteo" />
+            <input class="input" type="text" id="adminMechanics" placeholder="Mecánica del sorteo" />
+            <input class="input" type="number" id="adminPricePerTicket" placeholder="Precio por boleto" min="1" />
+            <input class="input" type="number" id="adminTotalTickets" placeholder="Total de boletos" min="1" />
+            <input class="input" type="text" id="adminWhatsapp" placeholder="WhatsApp internacional. Ej: 526861775790" />
+            <button type="submit" class="btn btn-primary">Guardar cambios</button>
+          </form>
+
+          <p class="admin-note">
+            Si cambias el total de boletos, la grilla pública se regenera automáticamente.
+          </p>
+        </article>
+
+        <article class="admin-panel">
+          <span class="eyebrow">Boletos</span>
+          <h3 style="font-size:2rem; margin-bottom: 8px;">Control de estado</h3>
+          <p class="helper">
+            Click en un boleto para alternar entre disponible y vendido. Los apartados creados por clientes se muestran como reservados.
+          </p>
+          <div class="search-row" style="margin-top: 16px;">
+            <input class="input" type="text" id="adminSearchTicket" placeholder="Buscar boleto" />
+          </div>
+          <div class="admin-ticket-grid" id="adminTicketGrid"></div>
+        </article>
+
+        <article class="admin-panel" style="grid-column: 1 / -1;">
+          <span class="eyebrow">Apartados</span>
+          <h3 style="font-size:2rem; margin-bottom: 8px;">Solicitudes recibidas</h3>
+          <div class="orders-list" id="ordersList"></div>
+        </article>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js";
+    import {
+      getAuth,
+      signInWithEmailAndPassword,
+      onAuthStateChanged,
+      signOut
+    } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-auth.js";
+    import {
+      getFirestore,
+      doc,
+      getDoc,
+      setDoc,
+      updateDoc,
+      collection,
+      getDocs,
+      query,
+      orderBy,
+      limit,
+      serverTimestamp
+    } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "PEGA_AQUI_TU_API_KEY",
+      authDomain: "PEGA_AQUI_TU_AUTH_DOMAIN",
+      projectId: "PEGA_AQUI_TU_PROJECT_ID",
+      storageBucket: "PEGA_AQUI_TU_STORAGE_BUCKET",
+      messagingSenderId: "PEGA_AQUI_TU_MESSAGING_SENDER_ID",
+      appId: "PEGA_AQUI_TU_APP_ID"
+    };
+
+    const defaultSettings = {
+      prize: "Camioneta + $50,000 MXN",
+      bannerPrize: "SUV 2025 + bonos en efectivo",
+      drawDate: "24 diciembre 2025",
+      drawTime: "20:00 hrs CDMX",
+      mechanics: "Lotería Nacional",
+      pricePerTicket: 500,
+      totalTickets: 100,
+      whatsappNumber: "526861775790"
+    };
+
+    const ticketGrid = document.getElementById("ticketGrid");
+    const selectedList = document.getElementById("selectedList");
+    const selectedCount = document.getElementById("selectedCount");
+    const totalPrice = document.getElementById("totalPrice");
+    const searchTicket = document.getElementById("searchTicket");
+    const clearSelectionBtn = document.getElementById("clearSelection");
+    const sendWhatsappBtn = document.getElementById("sendWhatsapp");
+    const packageButtons = document.querySelectorAll(".package-btn");
+
+    const heroPrize = document.getElementById("heroPrize");
+    const heroDrawDate = document.getElementById("heroDrawDate");
+    const heroDrawTime = document.getElementById("heroDrawTime");
+    const heroMechanics = document.getElementById("heroMechanics");
+    const bannerPrize = document.getElementById("bannerPrize");
+    const statTotalTickets = document.getElementById("statTotalTickets");
+    const pricePerTicketLabel = document.getElementById("pricePerTicketLabel");
+    const priceCard1 = document.getElementById("priceCard1");
+    const priceCard5 = document.getElementById("priceCard5");
+    const priceCard20 = document.getElementById("priceCard20");
+    const contactWhatsappLink = document.getElementById("contactWhatsappLink");
+    const contactWhatsappText = document.getElementById("contactWhatsappText");
+
+    const adminShell = document.getElementById("adminShell");
+    const openAdminBtn = document.getElementById("openAdmin");
+    const closeAdminBtn = document.getElementById("closeAdmin");
+    const logoutAdminBtn = document.getElementById("logoutAdmin");
+    const adminLoginCard = document.getElementById("adminLoginCard");
+    const adminDashboard = document.getElementById("adminDashboard");
+    const adminLoginForm = document.getElementById("adminLoginForm");
+    const adminStatus = document.getElementById("adminStatus");
+    const settingsForm = document.getElementById("settingsForm");
+    const adminTicketGrid = document.getElementById("adminTicketGrid");
+    const adminSearchTicket = document.getElementById("adminSearchTicket");
+    const ordersList = document.getElementById("ordersList");
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    const raffleSettingsRef = doc(db, "raffle", "settings");
+    const ticketsRef = collection(db, "tickets");
+    const ordersRef = collection(db, "orders");
+
+    let raffleSettings = { ...defaultSettings };
+    let soldTickets = new Set();
+    let reservedTickets = new Set();
+    let selected = new Set();
+
+    function formatTicket(num) {
+      return String(num).padStart(4, "0");
+    }
+
+    function formatCurrency(value) {
+      return `$${Number(value || 0).toLocaleString("es-MX")} MXN`;
+    }
+
+    function formatWhatsappDisplay(raw) {
+      if (!raw) return "";
+      return `+${raw}`;
+    }
+
+    function applySettingsToUI() {
+      heroPrize.textContent = raffleSettings.prize;
+      bannerPrize.textContent = raffleSettings.bannerPrize;
+      heroDrawDate.textContent = raffleSettings.drawDate;
+      heroDrawTime.textContent = raffleSettings.drawTime;
+      heroMechanics.textContent = raffleSettings.mechanics;
+      statTotalTickets.textContent = Number(raffleSettings.totalTickets || 0).toLocaleString("es-MX");
+      pricePerTicketLabel.textContent = formatCurrency(raffleSettings.pricePerTicket);
+      priceCard1.textContent = formatCurrency(raffleSettings.pricePerTicket);
+      priceCard5.textContent = formatCurrency(raffleSettings.pricePerTicket * 5);
+      priceCard20.textContent = formatCurrency(raffleSettings.pricePerTicket * 20);
+      contactWhatsappLink.href = `https://wa.me/${raffleSettings.whatsappNumber}`;
+      contactWhatsappText.textContent = formatWhatsappDisplay(raffleSettings.whatsappNumber);
+      updateSelectionUI();
+    }
+
+    async function ensureSettings() {
+      const snap = await getDoc(raffleSettingsRef);
+      if (!snap.exists()) {
+        await setDoc(raffleSettingsRef, defaultSettings);
+        raffleSettings = { ...defaultSettings };
+      } else {
+        raffleSettings = { ...defaultSettings, ...snap.data() };
+      }
+      applySettingsToUI();
+      fillAdminSettings();
+    }
+
+    async function loadTickets() {
+      soldTickets.clear();
+      reservedTickets.clear();
+
+      const snapshot = await getDocs(ticketsRef);
+      snapshot.forEach((ticketDoc) => {
+        const data = ticketDoc.data();
+        if (data.status === "sold") soldTickets.add(ticketDoc.id);
+        if (data.status === "reserved") reservedTickets.add(ticketDoc.id);
+      });
+
+      for (const number of Array.from(selected)) {
+        if (soldTickets.has(number) || reservedTickets.has(number)) {
+          selected.delete(number);
+        }
+      }
+
+      renderTickets(searchTicket.value.trim());
+      renderAdminTickets(adminSearchTicket.value.trim());
+      updateSelectionUI();
+    }
+
+    async function loadOrders() {
+      ordersList.innerHTML = "";
+      const q = query(ordersRef, orderBy("createdAt", "desc"), limit(30));
+      const snapshot = await getDocs(q);
+
+      if (snapshot.empty) {
+        ordersList.innerHTML = '<div class="helper">Aún no hay apartados registrados.</div>';
+        return;
+      }
+
+      snapshot.forEach((orderDoc) => {
+        const data = orderDoc.data();
+        const item = document.createElement("article");
+        item.className = "order-card";
+        item.innerHTML = `
+          <strong>${escapeHtml(data.name || "Sin nombre")}</strong>
+          <div>Tel: ${escapeHtml(data.phone || "-")}</div>
+          <div>Correo: ${escapeHtml(data.email || "No proporcionado")}</div>
+          <div>Boletos: ${escapeHtml((data.tickets || []).join(", "))}</div>
+          <div>Total: ${formatCurrency(data.total || 0)}</div>
+          <div>Notas: ${escapeHtml(data.notes || "Sin notas")}</div>
+        `;
+        ordersList.appendChild(item);
+      });
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function renderTickets(filter = "") {
+      ticketGrid.innerHTML = "";
+      for (let i = 1; i <= raffleSettings.totalTickets; i++) {
+        const ticketNumber = formatTicket(i);
+        if (filter && !ticketNumber.includes(filter)) continue;
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "ticket";
+        button.textContent = ticketNumber;
+        button.dataset.number = ticketNumber;
+
+        if (soldTickets.has(ticketNumber) || reservedTickets.has(ticketNumber)) {
+          button.classList.add("sold");
+          button.disabled = true;
+        }
+
+        if (selected.has(ticketNumber)) {
+          button.classList.add("selected");
+        }
+
+        button.addEventListener("click", () => toggleTicket(ticketNumber));
+        ticketGrid.appendChild(button);
+      }
+    }
+
+    function renderAdminTickets(filter = "") {
+      adminTicketGrid.innerHTML = "";
+      for (let i = 1; i <= raffleSettings.totalTickets; i++) {
+        const ticketNumber = formatTicket(i);
+        if (filter && !ticketNumber.includes(filter)) continue;
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "admin-ticket";
+        button.textContent = ticketNumber;
+
+        if (soldTickets.has(ticketNumber)) {
+          button.classList.add("sold");
+        } else if (reservedTickets.has(ticketNumber)) {
+          button.classList.add("reserved");
+        }
+
+        button.addEventListener("click", async () => {
+          const currentStatus = soldTickets.has(ticketNumber)
+            ? "sold"
+            : reservedTickets.has(ticketNumber)
+            ? "reserved"
+            : "available";
+
+          if (currentStatus === "reserved") {
+            const confirmReserved = confirm("Este boleto está reservado por un cliente. ¿Marcarlo como vendido?");
+            if (!confirmReserved) return;
+            await setDoc(doc(db, "tickets", ticketNumber), {
+              status: "sold",
+              updatedAt: serverTimestamp()
+            }, { merge: true });
+          } else if (currentStatus === "sold") {
+            await setDoc(doc(db, "tickets", ticketNumber), {
+              status: "available",
+              updatedAt: serverTimestamp()
+            }, { merge: true });
+          } else {
+            await setDoc(doc(db, "tickets", ticketNumber), {
+              status: "sold",
+              updatedAt: serverTimestamp()
+            }, { merge: true });
+          }
+
+          await loadTickets();
+        });
+
+        adminTicketGrid.appendChild(button);
+      }
+    }
+
+    function toggleTicket(ticketNumber) {
+      if (soldTickets.has(ticketNumber) || reservedTickets.has(ticketNumber)) return;
+
+      if (selected.has(ticketNumber)) {
+        selected.delete(ticketNumber);
+      } else {
+        selected.add(ticketNumber);
+      }
+
+      updateSelectionUI();
+      renderTickets(searchTicket.value.trim());
+    }
+
+    function updateSelectionUI() {
+      const values = Array.from(selected).sort();
+      selectedList.innerHTML = "";
+
+      values.forEach((value) => {
+        const chip = document.createElement("span");
+        chip.className = "chip";
+        chip.textContent = value;
+        selectedList.appendChild(chip);
+      });
+
+      selectedCount.textContent = values.length;
+      totalPrice.textContent = formatCurrency(values.length * raffleSettings.pricePerTicket);
+    }
+
+    function pickRandomAvailable(quantity) {
+      const available = [];
+      for (let i = 1; i <= raffleSettings.totalTickets; i++) {
+        const ticket = formatTicket(i);
+        if (!soldTickets.has(ticket) && !reservedTickets.has(ticket) && !selected.has(ticket)) {
+          available.push(ticket);
+        }
+      }
+
+      for (let i = available.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [available[i], available[j]] = [available[j], available[i]];
+      }
+
+      available.slice(0, quantity).forEach((ticket) => selected.add(ticket));
+      updateSelectionUI();
+      renderTickets(searchTicket.value.trim());
+      document.getElementById("boletos").scrollIntoView({ behavior: "smooth" });
+    }
+
+    function fillAdminSettings() {
+      document.getElementById("adminPrize").value = raffleSettings.prize;
+      document.getElementById("adminBannerPrize").value = raffleSettings.bannerPrize;
+      document.getElementById("adminDrawDate").value = raffleSettings.drawDate;
+      document.getElementById("adminDrawTime").value = raffleSettings.drawTime;
+      document.getElementById("adminMechanics").value = raffleSettings.mechanics;
+      document.getElementById("adminPricePerTicket").value = raffleSettings.pricePerTicket;
+      document.getElementById("adminTotalTickets").value = raffleSettings.totalTickets;
+      document.getElementById("adminWhatsapp").value = raffleSettings.whatsappNumber;
+    }
+
+    searchTicket.addEventListener("input", (e) => {
+      renderTickets(e.target.value.trim());
+    });
+
+    adminSearchTicket.addEventListener("input", (e) => {
+      renderAdminTickets(e.target.value.trim());
+    });
+
+    clearSelectionBtn.addEventListener("click", () => {
+      selected.clear();
+      updateSelectionUI();
+      renderTickets(searchTicket.value.trim());
+    });
+
+    packageButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const qty = Number(button.dataset.qty || 0);
+        pickRandomAvailable(qty);
+      });
+    });
+
+    sendWhatsappBtn.addEventListener("click", async () => {
+      const name = document.getElementById("buyerName").value.trim();
+      const phone = document.getElementById("buyerPhone").value.trim();
+      const email = document.getElementById("buyerEmail").value.trim();
+      const notes = document.getElementById("buyerNotes").value.trim();
+      const tickets = Array.from(selected).sort();
+
+      if (!name || !phone) {
+        alert("Completa al menos nombre y teléfono.");
+        return;
+      }
+
+      if (!tickets.length) {
+        alert("Selecciona al menos un boleto.");
+        return;
+      }
+
+      for (const ticket of tickets) {
+        if (soldTickets.has(ticket) || reservedTickets.has(ticket)) {
+          alert(`El boleto ${ticket} ya no está disponible.`);
+          await loadTickets();
+          return;
+        }
+      }
+
+      const total = tickets.length * raffleSettings.pricePerTicket;
+
+      try {
+        for (const ticket of tickets) {
+          await setDoc(doc(db, "tickets", ticket), {
+            status: "reserved",
+            customerName: name,
+            customerPhone: phone,
+            updatedAt: serverTimestamp()
+          }, { merge: true });
+        }
+
+        await setDoc(doc(ordersRef), {
+          name,
+          phone,
+          email,
+          notes,
+          tickets,
+          total,
+          status: "pending",
+          createdAt: serverTimestamp()
+        });
+
+        const message = [
+          "Hola, quiero apartar boletos para la rifa.",
+          "",
+          `Nombre: ${name}`,
+          `Teléfono: ${phone}`,
+          `Correo: ${email || "No proporcionado"}`,
+          `Boletos: ${tickets.join(", ")}`,
+          `Cantidad: ${tickets.length}`,
+          `Total estimado: ${formatCurrency(total)}`,
+          `Notas: ${notes || "Sin notas"}`
+        ].join("\\n");
+
+        const url = `https://wa.me/${raffleSettings.whatsappNumber}?text=${encodeURIComponent(message)}`;
+        selected.clear();
+        await loadTickets();
+        await loadOrders();
+        window.open(url, "_blank");
+      } catch (error) {
+        console.error(error);
+        alert("No se pudo registrar el apartado. Revisa la configuración de Firebase.");
+      }
+    });
+
+    openAdminBtn.addEventListener("click", () => {
+      adminShell.classList.add("open");
+    });
+
+    closeAdminBtn.addEventListener("click", () => {
+      adminShell.classList.remove("open");
+    });
+
+    adminLoginForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = document.getElementById("adminEmail").value.trim();
+      const password = document.getElementById("adminPassword").value;
+
+      try {
+        await signInWithEmailAndPassword(auth, email, password);
+      } catch (error) {
+        console.error(error);
+        alert("No se pudo iniciar sesión.");
+      }
+    });
+
+    logoutAdminBtn.addEventListener("click", async () => {
+      await signOut(auth);
+    });
+
+    onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        adminStatus.textContent = `Autenticado como ${user.email}`;
+        adminLoginCard.classList.add("hidden");
+        adminDashboard.classList.remove("hidden");
+        logoutAdminBtn.classList.remove("hidden");
+        await loadOrders();
+        renderAdminTickets(adminSearchTicket.value.trim());
+      } else {
+        adminStatus.textContent = "No autenticado";
+        adminLoginCard.classList.remove("hidden");
+        adminDashboard.classList.add("hidden");
+        logoutAdminBtn.classList.add("hidden");
+      }
+    });
+
+    settingsForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      const nextSettings = {
+        prize: document.getElementById("adminPrize").value.trim(),
+        bannerPrize: document.getElementById("adminBannerPrize").value.trim(),
+        drawDate: document.getElementById("adminDrawDate").value.trim(),
+        drawTime: document.getElementById("adminDrawTime").value.trim(),
+        mechanics: document.getElementById("adminMechanics").value.trim(),
+        pricePerTicket: Number(document.getElementById("adminPricePerTicket").value || 0),
+        totalTickets: Number(document.getElementById("adminTotalTickets").value || 0),
+        whatsappNumber: document.getElementById("adminWhatsapp").value.trim()
+      };
+
+      await updateDoc(raffleSettingsRef, nextSettings);
+      raffleSettings = { ...raffleSettings, ...nextSettings };
+      applySettingsToUI();
+      renderTickets(searchTicket.value.trim());
+      renderAdminTickets(adminSearchTicket.value.trim());
+      alert("Configuración guardada.");
+    });
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) entry.target.classList.add("show");
+      });
+    }, { threshold: 0.12 });
+
+    document.querySelectorAll(".reveal").forEach((el) => observer.observe(el));
+
+    async function init() {
+      try {
+        await ensureSettings();
+        await loadTickets();
+      } catch (error) {
+        console.error(error);
+        alert("Falta configurar Firebase en el archivo antes de publicar.");
+      }
+      updateSelectionUI();
+    }
+
+    init();
+  </script>
+</body>
+</html>
+```
+
+**Reglas de Firestore**
+Necesitas reglas para que:
+- cualquiera pueda leer la rifa pública
+- solo admin autenticado pueda cambiar configuración y marcar vendidos
+- cualquiera pueda crear apartados
+
+Usa esto en Firestore Rules:
+
+```txt
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /raffle/settings {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    match /tickets/{ticketId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if true;
+      allow delete: if request.auth != null;
+    }
+
+    match /orders/{orderId} {
+      allow read: if request.auth != null;
+      allow create: if true;
+      allow update, delete: if request.auth != null;
+    }
+  }
+}
+```
+
+**Importante**
+Esa regla de `tickets` permite update público para que el cliente reserve. Es funcional, pero no es la opción más segura. La versión seria para producción fuerte es:
+
+- cliente crea solo `orders`
+- una Cloud Function valida disponibilidad
+- la Cloud Function marca `tickets`
+- el navegador nunca escribe directamente estados críticos
+
+Si quieres máxima seguridad, ese es el siguiente paso.
+
+**Cómo publicarlo**
+1. Crea un proyecto en Firebase.
+2. Activa `Authentication > Email/Password`.
+3. Crea el usuario administrador.
+4. Activa `Firestore Database`.
+5. Copia las credenciales web del proyecto y pégalas en `firebaseConfig`.
+6. Publica este `index.html` en tu hosting.
+
+**Límite real**
+- Esta versión ya funciona publicada.
+- El panel admin funciona desde cualquier navegador donde inicies sesión.
+- Los apartados y cambios quedan guardados online.
+- Pero para evitar fraudes o carreras de concurrencia, lo ideal es endurecerlo con Cloud Functions.
+
+Si quieres, el siguiente paso útil es uno de estos:
+
+1. Te entrego una versión más segura con Cloud Functions y validación real de disponibilidad.
+2. Te la separo en archivos `index.html`, `app.js` y `firestore.rules`.
+3. Te adapto este panel para tu dominio/hosting actual y con tus datos reales.
