@@ -1671,3 +1671,50 @@ service cloud.firestore {
     }
   }
 }
+
+<!-- Original file preserved above -->
+<!-- AGREGADO: Firebase funcionalidad sin modificar lo existente -->
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-app.js";
+  import { getFirestore, collection, addDoc, getDocs } from "https://www.gstatic.com/firebasejs/12.12.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyB_aDaGbg5NZRzz4vAs00VJA_pormyhuhw",
+    authDomain: "rifas-ffd40.firebaseapp.com",
+    projectId: "rifas-ffd40",
+    storageBucket: "rifas-ffd40.firebasestorage.app",
+    messagingSenderId: "365626064191",
+    appId: "1:365626064191:web:f77a70612f202326cc278a",
+    measurementId: "G-GGYXBDY0HJ"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  // FUNCION PARA GUARDAR PARTICIPANTE
+  window.guardarParticipante = async function(nombre, numero) {
+    try {
+      const docRef = await addDoc(collection(db, "rifas"), {
+        nombre: nombre,
+        numero: numero,
+        fecha: new Date()
+      });
+      console.log("Guardado con ID:", docRef.id);
+      alert("Número apartado correctamente");
+    } catch (e) {
+      console.error("Error:", e);
+    }
+  }
+
+  // FUNCION PARA OBTENER NUMEROS OCUPADOS
+  window.obtenerNumeros = async function() {
+    const querySnapshot = await getDocs(collection(db, "rifas"));
+    let ocupados = [];
+    querySnapshot.forEach((doc) => {
+      ocupados.push(doc.data().numero);
+    });
+    return ocupados;
+  }
+
+</script>
